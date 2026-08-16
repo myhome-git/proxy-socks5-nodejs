@@ -1,0 +1,15 @@
+[Unit]
+Description=proxy-tcp
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory={{WORK_DIR}}
+ExecStart=/usr/bin/node {{WORK_DIR}}/dist/index.js
+Restart=always
+RestartSec=5
+EnvironmentFile={{WORK_DIR}}/.env.dev
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
