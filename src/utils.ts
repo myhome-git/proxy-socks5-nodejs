@@ -7,6 +7,15 @@ export function log(msg: string, level: "INFO" | "WARN" | "ERROR" = "INFO") {
 }
 
 /**
+ * 打印数据包的 hex 前缀（用于泄露检测）
+ * 只打印前 maxBytes 字节，避免日志过长
+ */
+export function hexDump(label: string, buf: Buffer, maxBytes = 32) {
+  const hex = buf.subarray(0, maxBytes).toString("hex");
+  log(`[LEAK-DETECT] ${label}: ${hex} (${buf.length} bytes total)`);
+}
+
+/**
  * 清洗可能泄露用户真实信息的请求头
  * 用于 Mode2 解密后转发到真实目标之前
  */

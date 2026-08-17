@@ -7,7 +7,7 @@
 import net from "net";
 import { WebSocket } from "ws";
 import { Socks5Server, type Tunnel } from "../core/socks5.js";
-import { log } from "../utils.js";
+import { log, hexDump } from "../utils.js";
 import { type AppConfig, resolveWsProtocol } from "../config.js";
 
 
@@ -130,7 +130,13 @@ export class Mode1Handler {
       ws.onopen = () => {
         // 发送加密的隧道建立请求
         const tunnelReq = serializeTunnelRequest(host, port);
+        if (this.config.leakDetect) {
+          log(`[LEAK-DETECT] Mode1 发送前 (明文): tunnel ${host}:${port}`);
+        }
         const encryptedTunnelReq = pack(tunnelReq, this.encryptKey);
+        if (this.config.leakDetect) {
+          hexDump("[LEAK-DETECT] Mode1 加密后 (密文)", encryptedTunnelReq);
+        }
         ws.send(encryptedTunnelReq);
       };
 
@@ -162,6 +168,9 @@ export class Mode1Handler {
 
             // 隧道建立成功后，立即发送浏览器第一批数据
             if (firstData.length > 0) {
+              if (this.config.leakDetect) {
+                log(`[LEAK-DETECT] Mode1 发送前 (明文): 第一批数据 ${firstData.length} bytes`);
+              }
               tunnel.write(firstData);
             }
 

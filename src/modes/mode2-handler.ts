@@ -7,7 +7,7 @@
 import http from "http";
 import net from "net";
 import { WebSocketServer, WebSocket } from "ws";
-import { log } from "../utils.js";
+import { log, hexDump } from "../utils.js";
 import { type AppConfig } from "../config.js";
 import {
   pack, tryUnpack,
@@ -73,6 +73,9 @@ export class Mode2Handler {
     // 等待第一条加密消息 (隧道建立请求)
     ws.once("message", (data) => {
       const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+      if (this.config.leakDetect) {
+        hexDump("[LEAK-DETECT] Mode2 收到 (密文) — 隧道建立请求", buf);
+      }
       const result = tryUnpack(buf, this.encryptKey);
       if (!result) {
         log("Mode2 WS 隧道解密失败", "ERROR");
@@ -82,6 +85,9 @@ export class Mode2Handler {
 
       try {
         const cmd = parseCommand(result.data);
+        if (this.config.leakDetect) {
+          log(`[LEAK-DETECT] Mode2 解密后 (明文): tunnel ${cmd.type === "tunnel" ? (cmd as any).host + ":" + (cmd as any).port : cmd.type}`);
+        }
         if (cmd.type === "tunnel") {
           // 建立到目标的 TCP 连接
           this.connectTarget(ws, cmd.host, cmd.port);
@@ -156,8 +162,14 @@ export class Mode2Handler {
     ws.on("message", (data) => {
       if (closed) return;
       const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+      if (this.config.leakDetect) {
+        hexDump("[LEAK-DETECT] Mode2 收到 (密文) — 隧道数据", buf);
+      }
       const result = tryUnpackTunnelData(buf, this.encryptKey);
       if (result) {
+        if (this.config.leakDetect) {
+          log(`[LEAK-DETECT] Mode2 解密后 (明文): ${result.data.length} bytes, hex=${result.data.subarray(0, 16).toString("hex")}`);
+        }
         if (targetConn) {
           try { target.write(result.data); } catch {}
         } else {

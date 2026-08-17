@@ -76,6 +76,9 @@ export interface AppConfig {
   encryptListenPort: number;
   // Mode2 监听地址（Mode2 用）
   encryptListenHost: string;
+
+  // 明文泄露检测（调试用）
+  leakDetect: boolean;
 }
 
 function requireEnv(name: string): string {
@@ -98,6 +101,7 @@ export function loadConfig(): AppConfig {
     remotePort: parseInt(requireEnv("REMOTE_PORT"), 10),
     encryptListenPort: parseInt(requireEnv("ENCRYPT_LISTEN_PORT"), 10),
     encryptListenHost: requireEnv("ENCRYPT_LISTEN_HOST"),
+    leakDetect: requireEnv("LEAK_DETECT") === "true",
   };
 
   return config;
@@ -112,6 +116,9 @@ export function resolveWsProtocol(config: AppConfig): "ws" | "wss" {
 
 export function printConfig(config: AppConfig) {
   const wsProto = resolveWsProtocol(config);
+  if (config.leakDetect) {
+    log(`  明文泄露检测: 已开启 🔍`);
+  }
   log("============================================");
   log(`代理配置 (模式: ${config.proxyMode})`);
   
