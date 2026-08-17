@@ -20,7 +20,7 @@ function loadEnvFile(path: string): void {
   try {
     content = fs.readFileSync(path, "utf-8");
   } catch {
-    log(`⚠ 未找到 .env 文件: ${path}，使用默认配置`, "WARN");
+    log(`⚠ 未找到 .env 文件: ${path}，所有配置必须通过环境变量提供`, "WARN");
     return;
   }
 
@@ -69,6 +69,8 @@ export interface AppConfig {
   encryptPassword: string;
   // 加密盐值
   encryptSalt: string;
+  // Mode1 连接 Mode2 的协议（http = 直连 TCP, https = 通过 Cloudflare/HTTPS）
+  remoteProtocol: "http" | "https";
   // Mode1 连接 Mode2 的地址（Mode1 用）
   remoteHost: string;
   // Mode1 连接 Mode2 的端口（Mode1 用）
@@ -79,23 +81,27 @@ export interface AppConfig {
   encryptListenHost: string;
 }
 
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`❌ 缺少必要环境变量: ${name}，请在 .env.dev 文件中配置`);
+  }
+  return value;
+}
+
 export function loadConfig(): AppConfig {
   const config: AppConfig = {
-    proxyMode: (process.env.PROXY_MODE || "mode1") as "mode1" | "mode2",
-
-    bindHost: process.env.BIND_HOST || "0.0.0.0",
-
-    httpPort: parseInt(process.env.HTTP_PORT || "9090", 10),
-
-    socks5Port: parseInt(process.env.SOCKS5_PORT || "1080", 10),
-
-    // 加密隧道配置
-    encryptPassword: process.env.ENCRYPT_PASSWORD || "default-encrypt-key-2024",
-    encryptSalt: process.env.ENCRYPT_SALT || "proxy-salt",
-    remoteHost: process.env.REMOTE_HOST || "127.0.0.1",
-    remotePort: parseInt(process.env.REMOTE_PORT || "9999", 10),
-    encryptListenPort: parseInt(process.env.ENCRYPT_LISTEN_PORT || "9999", 10),
-    encryptListenHost: process.env.ENCRYPT_LISTEN_HOST || "0.0.0.0",
+    proxyMode: requireEnv("PROXY_MODE") as "mode1" | "mode2",
+    bindHost: requireEnv("BIND_HOST"),
+    httpPort: parseInt(requireEnv("HTTP_PORT"), 10),
+    socks5Port: parseInt(requireEnv("SOCKS5_PORT"), 10),
+    encryptPassword: requireEnv("ENCRYPT_PASSWORD"),
+    encryptSalt: requireEnv("ENCRYPT_SALT"),
+    remoteProtocol: requireEnv("REMOTE_PROTOCOL") as "http" | "https",
+    remoteHost: requireEnv("REMOTE_HOST"),
+    remotePort: parseInt(requireEnv("REMOTE_PORT"), 10),
+    encryptListenPort: parseInt(requireEnv("ENCRYPT_LISTEN_PORT"), 10),
+    encryptListenHost: requireEnv("ENCRYPT_LISTEN_HOST"),
   };
 
   log(`配置加载完成: 模式=${config.proxyMode}, HTTP=${config.bindHost}:${config.httpPort}, SOCKS5=${config.bindHost}:${config.socks5Port}`);
@@ -109,7 +115,7 @@ export function printConfig(config: AppConfig) {
   log(`  SOCKS5 代理:   ${config.bindHost}:${config.socks5Port}`);
   
   if (config.proxyMode === "mode1") {
-    log(`  加密隧道:      → ${config.remoteHost}:${config.remotePort}`);
+    log(`  加密隧道:      → ${config.remoteProtocol}://${config.remoteHost}:${config.remotePort}`);
   } else {
     log(`  加密监听:      ${config.encryptListenHost}:${config.encryptListenPort}`);
   }
