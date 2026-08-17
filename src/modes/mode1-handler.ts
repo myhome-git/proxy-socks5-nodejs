@@ -7,6 +7,7 @@
 import net from "net";
 import { WebSocket } from "ws";
 import { Socks5Server, type Tunnel } from "../core/socks5.js";
+import { HttpProxyServer } from "../core/http-proxy.js";
 import { log } from "../utils.js";
 import { type AppConfig, resolveWsProtocol } from "../config.js";
 
@@ -65,6 +66,9 @@ export class Mode1Handler {
     private socks5Server: Socks5Server | null = null;
     private socks5ServerInstance: net.Server | null = null;
     private socks5Sockets = new Set<net.Socket>();
+    private httpProxyServer: HttpProxyServer | null = null;
+    private httpProxyServerInstance: net.Server | null = null;
+    private httpProxySockets = new Set<net.Socket>();
     private config: AppConfig;
     private encryptKey: Buffer;
 
@@ -75,6 +79,7 @@ export class Mode1Handler {
 
     start() {
         this.socks5ServerInstance = this.startSocks5();
+        this.httpProxyServerInstance = this.startHttpProxy();
     }
 
     async stop() {
@@ -83,7 +88,12 @@ export class Mode1Handler {
             await this.closeServerForce(this.socks5ServerInstance, this.socks5Sockets);
             this.socks5ServerInstance = null;
         }
+        if (this.httpProxyServerInstance) {
+            await this.closeServerForce(this.httpProxyServerInstance, this.httpProxySockets);
+            this.httpProxyServerInstance = null;
+        }
         this.socks5Server = null;
+        this.httpProxyServer = null;
         log("Mode1 服务已关闭", "INFO");
     }
 
@@ -110,6 +120,33 @@ export class Mode1Handler {
         server.on("connection", (socket) => {
             this.socks5Sockets.add(socket);
             socket.on("close", () => this.socks5Sockets.delete(socket));
+        });
+        return server;
+    }
+
+    // ============================================================
+    // HTTP 代理 — 方案 B，与 SOCKS5 分开监听
+    // ============================================================
+
+    private startHttpProxy(): net.Server {
+        const createTunnel = async (
+            host: string, port: number,
+            firstData: Buffer,
+            onData: (data: Buffer) => void,
+            onClose: () => void,
+        ): Promise<Tunnel> => {
+            const protocol = detectProtocol(firstData);
+            log(`Mode1 HTTP [${protocol}] ${host}:${port} (${firstData.length} bytes)`);
+
+            // 所有协议统一通过 WebSocket 加密隧道
+            return this.openTunnel(host, port, firstData, onData, onClose);
+        };
+
+        this.httpProxyServer = new HttpProxyServer(createTunnel);
+        const server = this.httpProxyServer.start(this.config.httpProxyPort, this.config.bindHost);
+        server.on("connection", (socket) => {
+            this.httpProxySockets.add(socket);
+            socket.on("close", () => this.httpProxySockets.delete(socket));
         });
         return server;
     }

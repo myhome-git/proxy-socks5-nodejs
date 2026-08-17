@@ -58,8 +58,11 @@ export interface AppConfig {
   // 监听地址
   bindHost: string;
 
-  // SOCKS5 代理端口（唯一入口）
+  // SOCKS5 代理端口
   socks5Port: number;
+
+  // HTTP 代理端口（方案B，与 SOCKS5 分开监听）
+  httpProxyPort: number;
 
   // ===== 加密隧道配置 (Mode1 ↔ Mode2) =====
   // 加密密码（用于派生 AES-256 密钥）
@@ -92,6 +95,7 @@ export function loadConfig(): AppConfig {
     proxyMode: requireEnv("PROXY_MODE") as "mode1" | "mode2",
     bindHost: requireEnv("BIND_HOST"),
     socks5Port: parseInt(requireEnv("SOCKS5_PORT"), 10),
+    httpProxyPort: parseInt(requireEnv("HTTP_PROXY_PORT"), 10),
     encryptPassword: requireEnv("ENCRYPT_PASSWORD"),
     encryptSalt: requireEnv("ENCRYPT_SALT"),
     remoteProtocol: requireEnv("REMOTE_PROTOCOL") as "ws" | "wss",
@@ -118,6 +122,7 @@ export function printConfig(config: AppConfig) {
   
   if (config.proxyMode === "mode1") {
     log(`  SOCKS5 代理:   ${config.bindHost}:${config.socks5Port}`);
+    log(`  HTTP 代理:     ${config.bindHost}:${config.httpProxyPort}`);
     log(`  加密隧道:      → ${wsProto}://${config.remoteHost}:${config.remotePort}`);
     log(`  协议检测:      HTTPS / HTTP / WebSocket / TCP (统一隧道)`);
   } else {
