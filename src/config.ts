@@ -66,6 +66,8 @@ export interface AppConfig {
   encryptPassword: string;
   // 加密盐值
   encryptSalt: string;
+  // Mode1 连接 Mode2 的协议（ws 或 wss）
+  remoteProtocol: "ws" | "wss";
   // Mode1 连接 Mode2 的地址（Mode1 用）
   remoteHost: string;
   // Mode1 连接 Mode2 的端口（Mode1 用）
@@ -91,6 +93,7 @@ export function loadConfig(): AppConfig {
     socks5Port: parseInt(requireEnv("SOCKS5_PORT"), 10),
     encryptPassword: requireEnv("ENCRYPT_PASSWORD"),
     encryptSalt: requireEnv("ENCRYPT_SALT"),
+    remoteProtocol: requireEnv("REMOTE_PROTOCOL") as "ws" | "wss",
     remoteHost: requireEnv("REMOTE_HOST"),
     remotePort: parseInt(requireEnv("REMOTE_PORT"), 10),
     encryptListenPort: parseInt(requireEnv("ENCRYPT_LISTEN_PORT"), 10),
@@ -101,28 +104,23 @@ export function loadConfig(): AppConfig {
 }
 
 /**
- * 根据远程主机地址自动判断 WebSocket 协议
- * - 127.0.0.1 / localhost / 0.0.0.0 → ws（直连）
- * - 其他 IP/域名 → wss（加密 WebSocket）
+ * 返回手动配置的 WebSocket 协议
  */
-export function resolveWsProtocol(remoteHost: string): "ws" | "wss" {
-  if (remoteHost === "127.0.0.1" || remoteHost === "localhost" || remoteHost === "0.0.0.0") {
-    return "ws";
-  }
-  return "wss";
+export function resolveWsProtocol(config: AppConfig): "ws" | "wss" {
+  return config.remoteProtocol;
 }
 
 export function printConfig(config: AppConfig) {
-  const wsProto = resolveWsProtocol(config.remoteHost);
+  const wsProto = resolveWsProtocol(config);
   log("============================================");
   log(`代理配置 (模式: ${config.proxyMode})`);
-  log(`  SOCKS5 代理:   ${config.bindHost}:${config.socks5Port}`);
   
   if (config.proxyMode === "mode1") {
+    log(`  SOCKS5 代理:   ${config.bindHost}:${config.socks5Port}`);
     log(`  加密隧道:      → ${wsProto}://${config.remoteHost}:${config.remotePort}`);
     log(`  协议检测:      HTTPS / HTTP / WebSocket / TCP (统一隧道)`);
   } else {
-    log(`  加密监听:      ${config.encryptListenHost}:${config.encryptListenPort}`);
+    log(`  WebSocket 隧道: ${wsProto}://${config.encryptListenHost}:${config.encryptListenPort}/tunnel`);
   }
   log("============================================");
 }

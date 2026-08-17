@@ -9,6 +9,8 @@ import { WebSocket } from "ws";
 import { Socks5Server, type Tunnel } from "../core/socks5.js";
 import { log } from "../utils.js";
 import { type AppConfig, resolveWsProtocol } from "../config.js";
+
+
 import {
   pack,
   tryUnpack,
@@ -120,7 +122,7 @@ export class Mode1Handler {
     onClose: () => void,
   ): Promise<Tunnel> {
     return new Promise((resolve, reject) => {
-      const wsProto = resolveWsProtocol(this.config.remoteHost);
+      const wsProto = resolveWsProtocol(this.config);
       const url = wsProto + '://' + this.config.remoteHost + ':' + this.config.remotePort + '/tunnel';
       const ws = new WebSocket(url);
       let settled = false;
