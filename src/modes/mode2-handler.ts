@@ -1,232 +1,194 @@
 /**
  * Mode2 解密端实现
  *
- * 远程解密转发服务器，收到加密数据后解密，转发到真实目标
+ * 仅 WebSocket /tunnel 服务器，接收 Mode1 的加密隧道请求。
+ * 收到隧道建立请求后，连接目标并双向加密转发。
  */
+import http from "http";
 import net from "net";
-import { ProxyServer } from "../core/proxy.js";
+import { WebSocketServer, WebSocket } from "ws";
 import { log } from "../utils.js";
 import { type AppConfig } from "../config.js";
 import {
-  pack,
-  tryUnpack,
-  packTunnelData,
-  tryUnpackTunnelData,
-  serializeHttpResponse,
-  serializeTunnelOk,
-  serializeClose,
+  pack, tryUnpack,
+  packTunnelData, tryUnpackTunnelData,
+  serializeTunnelOk, serializeClose,
   parseCommand,
-  type ParsedCommand,
 } from "../security/sbox.js";
 
-/** Mode2 连接状态 */
-interface Mode2ConnState {
-  buffer: Buffer;
-  mode: "idle" | "tunnel";
-  targetSocket: net.Socket | null;
-  targetHost: string;
-  targetPort: number;
-}
-
 export class Mode2Handler {
-  private listenServer: net.Server | null = null;
-  private connections = new Set<net.Socket>();
+  private httpServer: http.Server | null = null;
+  private wss: WebSocketServer | null = null;
   private config: AppConfig;
   private encryptKey: Buffer;
-  private proxy: ProxyServer;
 
-  constructor(config: AppConfig, encryptKey: Buffer, proxy: ProxyServer) {
+  constructor(config: AppConfig, encryptKey: Buffer) {
     this.config = config;
     this.encryptKey = encryptKey;
-    this.proxy = proxy;
   }
 
   start() {
-    const server = net.createServer((conn) => {
-      log("Mode2 收到加密连接: " + conn.remoteAddress);
-      this.connections.add(conn);
+    const server = http.createServer();
 
-      const state: Mode2ConnState = {
-        buffer: Buffer.alloc(0), mode: "idle",
-        targetSocket: null, targetHost: "", targetPort: 0,
-      };
-
-      conn.on("data", (data: Buffer) => {
-        state.buffer = Buffer.concat([state.buffer, data]);
-        this.processBuffer(conn, state);
-      });
-      conn.on("close", () => {
-        this.connections.delete(conn);
-        this.cleanupState(state);
-        log("Mode2 加密连接关闭");
-      });
-      conn.on("error", (err) => {
-        log("Mode2 连接错误: " + err.message, "ERROR");
-        this.cleanupState(state);
-      });
+    // WebSocket 服务器 (路径 /tunnel)
+    const wss = new WebSocketServer({ server, path: "/tunnel" });
+    wss.on("connection", (ws) => {
+      this.handleWebSocket(ws);
     });
 
     server.listen(this.config.encryptListenPort, this.config.encryptListenHost, () => {
-      log("Mode2 解密转发服务器已启动: " + this.config.encryptListenHost + ":" + this.config.encryptListenPort);
+      log(`Mode2 服务器已启动: ${this.config.encryptListenHost}:${this.config.encryptListenPort}`);
+      log(`  WebSocket 隧道: /tunnel`);
     });
-    this.listenServer = server;
+
+    this.httpServer = server;
+    this.wss = wss;
   }
 
   async stop() {
     log("Mode2 正在关闭服务...", "INFO");
-    for (const conn of this.connections) {
-      try { conn.destroy(); } catch {}
+    if (this.wss) {
+      this.wss.close();
+      this.wss = null;
     }
-    this.connections.clear();
-    if (this.listenServer) {
-      await this.closeServerForce(this.listenServer);
-      this.listenServer = null;
+    if (this.httpServer) {
+      await new Promise<void>((resolve) => {
+        this.httpServer!.close(() => resolve());
+        this.httpServer!.unref();
+      });
+      this.httpServer = null;
     }
     log("Mode2 服务已关闭", "INFO");
   }
 
-  private processBuffer(conn: net.Socket, state: Mode2ConnState) {
-    if (state.mode === "tunnel") {
-      while (true) {
-        const result = tryUnpackTunnelData(state.buffer, this.encryptKey);
-        if (!result) break;
-        state.buffer = state.buffer.subarray(result.consumed);
-        if (state.targetSocket) { try { state.targetSocket.write(result.data); } catch {} }
-      }
-      return;
-    }
+  // ============================================================
+  // WebSocket /tunnel — 处理所有隧道流量
+  // ============================================================
 
-    while (true) {
-      const result = tryUnpack(state.buffer, this.encryptKey);
-      if (!result) break;
-      state.buffer = state.buffer.subarray(result.consumed);
+  private handleWebSocket(ws: WebSocket) {
+    log("Mode2 WebSocket 隧道连接建立");
+
+    let targetConn: net.Socket | null = null;
+
+    // 等待第一条加密消息 (隧道建立请求)
+    ws.once("message", (data) => {
+      const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+      const result = tryUnpack(buf, this.encryptKey);
+      if (!result) {
+        log("Mode2 WS 隧道解密失败", "ERROR");
+        ws.close();
+        return;
+      }
+
       try {
         const cmd = parseCommand(result.data);
-        this.handleCommand(conn, state, cmd);
+        if (cmd.type === "tunnel") {
+          // 建立到目标的 TCP 连接
+          this.connectTarget(ws, cmd.host, cmd.port);
+        } else {
+          log(`Mode2 WS 未知命令类型: ${cmd.type}`, "WARN");
+          ws.close();
+        }
       } catch (err) {
-        log("Mode2 命令处理错误: " + err, "ERROR");
+        log(`Mode2 WS 命令解析失败: ${err}`, "ERROR");
+        ws.close();
       }
-    }
-  }
-
-  private async handleCommand(
-    conn: net.Socket, state: Mode2ConnState, cmd: ParsedCommand,
-  ) {
-    switch (cmd.type) {
-      case "http": {
-        log("Mode2 HTTP 转发: " + cmd.method + " " + cmd.url);
-        try {
-          const cleanedHeaders = this.cleanForwardHeaders(cmd.headers);
-          const request = new Request(cmd.url, {
-            method: cmd.method,
-            headers: cleanedHeaders,
-            body: cmd.body,
-          });
-          const response = await this.proxy.handleRequest(request, true);
-          const respHeaders: Record<string, string> = {};
-          response.headers.forEach((value, key) => {
-            const lk = key.toLowerCase();
-            if (!["transfer-encoding", "keep-alive", "connection"].includes(lk)) {
-              respHeaders[key] = value;
-            }
-          });
-          let body: Buffer | undefined;
-          if (response.body) body = Buffer.from(await response.arrayBuffer());
-          conn.write(pack(serializeHttpResponse(response.status, respHeaders, body), this.encryptKey));
-          log("Mode2 HTTP 响应: " + response.status + " " + cmd.url);
-        } catch (err) {
-          log("Mode2 HTTP 转发失败: " + err, "ERROR");
-          const errorResp = serializeHttpResponse(502, {}, Buffer.from("Proxy Error: " + err));
-          try { conn.write(pack(errorResp, this.encryptKey)); } catch {}
-        }
-        break;
-      }
-
-      case "tunnel": {
-        const host = cmd.host;
-        const port = cmd.port;
-        log("Mode2 隧道建立: " + host + ":" + port);
-        state.mode = "idle";
-        state.targetHost = host;
-        state.targetPort = port;
-        try {
-          const target = await new Promise<net.Socket>((resolve, reject) => {
-            const socket = net.createConnection({ host, port }, () => resolve(socket));
-            socket.on("error", (err) => reject(err));
-          });
-          state.targetSocket = target;
-          state.mode = "tunnel";
-          conn.write(pack(serializeTunnelOk(), this.encryptKey));
-          log("Mode2 隧道建立成功: " + host + ":" + port);
-
-          target.on("data", (targetData: Buffer) => {
-            try { conn.write(packTunnelData(targetData, this.encryptKey)); } catch {}
-          });
-          target.on("close", () => {
-            try { conn.write(pack(serializeClose(), this.encryptKey)); } catch {}
-            this.cleanupState(state);
-          });
-          target.on("error", (err) => {
-            log("目标连接错误 " + host + ":" + port + " - " + err.message, "ERROR");
-            this.cleanupState(state);
-          });
-        } catch (err) {
-          log("Mode2 隧道连接失败 " + host + ":" + port + ": " + err, "ERROR");
-          const errorResp = serializeHttpResponse(502, {});
-          try { conn.write(pack(errorResp, this.encryptKey)); } catch {}
-          this.cleanupState(state);
-        }
-        break;
-      }
-
-      case "close": {
-        log("Mode2 收到关闭命令");
-        this.cleanupState(state);
-        break;
-      }
-
-      default:
-        log("Mode2 未知命令类型", "WARN");
-    }
-  }
-
-  private cleanForwardHeaders(headers: Record<string, string>): Record<string, string> {
-    const leakHeaders = new Set([
-      "x-forwarded-for", "x-real-ip", "x-client-ip", "client-ip",
-      "forwarded", "via", "x-proxy-user-ip", "cf-connecting-ip",
-      "true-client-ip", "x-originating-ip", "x-forwarded-host",
-      "x-forwarded-proto", "x-forwarded-port", "x-forwarded-server",
-      "x-cluster-client-ip", "x-remote-ip", "x-remote-addr",
-      "forwarded-for", "x-request-id",
-      "proxy-connection", "proxy-authorization", "proxy-authenticate",
-      "x-cache", "x-cache-hit", "x-akamai-transformed",
-    ]);
-    const cleaned: Record<string, string> = {};
-    for (const [key, value] of Object.entries(headers)) {
-      if (!leakHeaders.has(key.toLowerCase())) cleaned[key] = value;
-    }
-    return cleaned;
-  }
-
-  private cleanupState(state: Mode2ConnState) {
-    if (state.targetSocket) {
-      try { state.targetSocket.end(); } catch {}
-      state.targetSocket = null;
-    }
-    state.mode = "idle";
-  }
-
-  private closeServerForce(server: net.Server, sockets?: Set<net.Socket>): Promise<void> {
-    return new Promise<void>((resolve) => {
-      if (sockets) {
-        for (const sock of sockets) {
-          try { sock.destroy(); } catch {}
-        }
-        sockets.clear();
-      }
-      server.close(() => { resolve(); });
-      server.unref();
-      setTimeout(() => resolve(), 3000);
     });
+
+    ws.on("error", () => {});
+  }
+
+  /**
+   * 连接到目标服务器，并处理双向加密转发
+   */
+  private connectTarget(ws: WebSocket, host: string, port: number) {
+    log(`Mode2 隧道建立: ${host}:${port}`);
+
+    let closed = false;
+    // 缓存建立连接前收到的隧道数据
+    let pendingData: Buffer[] = [];
+    let targetConn: net.Socket | null = null;
+
+    const target = net.createConnection({ host, port }, () => {
+      log(`Mode2 隧道建立成功: ${host}:${port}`);
+
+      // 发送隧道建立成功响应
+      try {
+        ws.send(pack(serializeTunnelOk(), this.encryptKey));
+      } catch {}
+
+      // 发送缓存的隧道数据
+      for (const d of pendingData) {
+        try { target.write(d); } catch {}
+      }
+      pendingData = [];
+    });
+
+    // 目标 → 加密 → Mode1
+    target.on("data", (targetData) => {
+      if (closed) return;
+      try {
+        ws.send(packTunnelData(targetData, this.encryptKey));
+      } catch {}
+    });
+
+    target.on("close", () => {
+      if (closed) return;
+      closed = true;
+      try {
+        ws.send(pack(serializeClose(), this.encryptKey));
+      } catch {}
+      try { ws.close(); } catch {}
+    });
+
+    target.on("error", (err) => {
+      if (closed) return;
+      closed = true;
+      log(`目标连接错误 ${host}:${port} - ${err.message}`, "ERROR");
+      // 如果目标连接失败，通知 Mode1
+      try {
+        ws.send(pack(serializeClose(), this.encryptKey));
+      } catch {}
+      try { ws.close(); } catch {}
+    });
+
+    // Mode1 加密数据 → 解密 → 目标
+    ws.on("message", (data) => {
+      if (closed) return;
+      const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+      const result = tryUnpackTunnelData(buf, this.encryptKey);
+      if (result) {
+        if (targetConn) {
+          try { target.write(result.data); } catch {}
+        } else {
+          // 目标连接尚未建立，缓存数据
+          pendingData.push(result.data);
+        }
+      }
+    });
+
+    ws.on("close", () => {
+      if (closed) return;
+      closed = true;
+      log(`Mode2 隧道关闭: ${host}:${port}`);
+      try { target.end(); } catch {}
+    });
+
+    ws.on("error", () => {
+      if (closed) return;
+      closed = true;
+      try { target.end(); } catch {}
+    });
+
+    // 超时处理
+    target.setTimeout(300000, () => {
+      if (closed) return;
+      closed = true;
+      log(`Mode2 隧道超时: ${host}:${port}`, "WARN");
+      try { target.end(); } catch {}
+      try { ws.close(); } catch {}
+    });
+
+    targetConn = target;
   }
 }

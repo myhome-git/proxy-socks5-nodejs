@@ -3,7 +3,8 @@
  *
  * 支持 CONNECT 命令，建立 TCP 隧道转发。
  * 无认证模式。
- * 所有流量通过加密隧道（Tunnel）转发到 Mode2。
+ * 流程：SOCKS5 握手 → CONNECT 请求 → 立即响应成功 → 等待浏览器数据
+ * → 检测协议 → 创建加密隧道转发到 Mode2
  */
 import net from "net";
 import { log } from "../utils.js";
@@ -22,7 +23,6 @@ const REP_HOST_UNREACHABLE = 0x04;
 
 // 认证方法
 const AUTH_NONE = 0x00;
-const AUTH_USER_PASS = 0x02;
 const AUTH_NO_ACCEPTABLE = 0xff;
 
 /** 加密隧道接口 */
@@ -31,10 +31,14 @@ export interface Tunnel {
   close(): void;
 }
 
-/** 隧道创建回调 */
+/**
+ * 隧道创建回调
+ * 在 SOCKS5 响应成功后，携带浏览器第一批数据进行协议检测
+ */
 export type TunnelCreator = (
   host: string,
   port: number,
+  firstData: Buffer,       // 浏览器发送的第一批数据，用于协议检测
   onData: (data: Buffer) => void,
   onClose: () => void,
 ) => Promise<Tunnel>;
@@ -48,8 +52,11 @@ export class Socks5Server {
     this.createTunnel =
       createTunnel ||
       // 默认回退：直接 TCP 连接（不加密，仅用于无隧道场景）
-      (async (host, port, onData, onClose) => {
-        const socket = net.createConnection({ host, port }, () => {});
+      (async (host, port, firstData, onData, onClose) => {
+        const socket = net.createConnection({ host, port }, () => {
+          // 建立连接后，立即发送第一批数据
+          socket.write(firstData);
+        });
         socket.on("data", onData);
         socket.on("close", onClose);
         socket.on("error", (e) => {
@@ -75,6 +82,7 @@ export class Socks5Server {
         const state = (ws as any)._state;
         if (state === "handshake") this.handleHandshake(ws, data);
         else if (state === "request") this.handleRequest(ws, data);
+        else if (state === "detect") this.handleDetect(ws, data);
         else if (state === "forward") {
           const tunnel = (ws as any)._tunnel as Tunnel | null;
           if (tunnel) tunnel.write(data);
@@ -144,21 +152,32 @@ export class Socks5Server {
     (ws as any)._targetHost = host; (ws as any)._targetPort = port;
     log(`SOCKS5 CONNECT: ${host}:${port}`);
 
-    // 通过加密隧道建立目标连接
+    // 立即响应 SOCKS5 成功，让浏览器开始发送数据
+    this.sendReply(ws, REP_SUCCESS, host, port);
+    // 切换到"检测"状态，等待浏览器发送第一批数据
+    (ws as any)._state = "detect";
+  }
+
+  /**
+   * 检测状态：浏览器已发送第一批数据，需要检测协议并创建隧道
+   */
+  private async handleDetect(ws: any, data: Buffer) {
+    const host = (ws as any)._targetHost as string;
+    const port = (ws as any)._targetPort as number;
+
     try {
       const tunnel = await this.createTunnel(
         host,
         port,
-        (data: Buffer) => { try { ws.write(data); } catch {} },
+        data,  // 浏览器第一批数据，用于协议检测
+        (d: Buffer) => { try { ws.write(d); } catch {} },
         () => { try { ws.end(); } catch {} },
       );
 
-      this.sendReply(ws, REP_SUCCESS, host, port);
       (ws as any)._state = "forward";
       (ws as any)._tunnel = tunnel;
     } catch (err) {
       log(`连接目标失败 ${host}:${port} - ${err}`, "ERROR");
-      this.sendReply(ws, REP_HOST_UNREACHABLE);
       this.cleanup(ws);
     }
   }

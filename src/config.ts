@@ -55,13 +55,10 @@ export interface AppConfig {
   // 运行模式: "mode1" = 加密端(本地), "mode2" = 解密端(远程)
   proxyMode: "mode1" | "mode2";
 
-  // 统一监听地址（HTTP 与 SOCKS5 共用）
+  // 监听地址
   bindHost: string;
 
-  // HTTP 代理
-  httpPort: number;
-
-  // SOCKS5 代理
+  // SOCKS5 代理端口（唯一入口）
   socks5Port: number;
 
   // ===== 加密隧道配置 (Mode1 ↔ Mode2) =====
@@ -93,7 +90,6 @@ export function loadConfig(): AppConfig {
   const config: AppConfig = {
     proxyMode: requireEnv("PROXY_MODE") as "mode1" | "mode2",
     bindHost: requireEnv("BIND_HOST"),
-    httpPort: parseInt(requireEnv("HTTP_PORT"), 10),
     socks5Port: parseInt(requireEnv("SOCKS5_PORT"), 10),
     encryptPassword: requireEnv("ENCRYPT_PASSWORD"),
     encryptSalt: requireEnv("ENCRYPT_SALT"),
@@ -104,14 +100,13 @@ export function loadConfig(): AppConfig {
     encryptListenHost: requireEnv("ENCRYPT_LISTEN_HOST"),
   };
 
-  log(`配置加载完成: 模式=${config.proxyMode}, HTTP=${config.bindHost}:${config.httpPort}, SOCKS5=${config.bindHost}:${config.socks5Port}`);
+  log(`配置加载完成: 模式=${config.proxyMode}, SOCKS5=${config.bindHost}:${config.socks5Port}`);
   return config;
 }
 
 export function printConfig(config: AppConfig) {
   log("============================================");
   log(`代理配置 (模式: ${config.proxyMode})`);
-  log(`  HTTP 代理:     ${config.bindHost}:${config.httpPort}`);
   log(`  SOCKS5 代理:   ${config.bindHost}:${config.socks5Port}`);
   
   if (config.proxyMode === "mode1") {

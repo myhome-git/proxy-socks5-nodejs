@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "tsc --noEmit && tsx src/index.ts",
     "build:noEmit": "tsc --noEmit",
-    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js --external:ws --external:bufferutil --external:utf-8-validate",
     "start": "node dist/index.js",
     "service-register": "bash deploy/register.sh",
     "service-start": "bash deploy/start.sh",
@@ -14,9 +14,12 @@
     "service-remove": "bash deploy/remove.sh",
     "test": "echo 'no tests yet'"
   },
-  "dependencies": {},
+  "dependencies": {
+    "ws": "^8.21.3"
+  },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@types/ws": "^8.18.1",
     "esbuild": "^0.28.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
