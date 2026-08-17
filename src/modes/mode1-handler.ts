@@ -8,7 +8,7 @@ import net from "net";
 import { WebSocket } from "ws";
 import { Socks5Server, type Tunnel } from "../core/socks5.js";
 import { log } from "../utils.js";
-import { type AppConfig } from "../config.js";
+import { type AppConfig, resolveWsProtocol } from "../config.js";
 import {
   pack,
   tryUnpack,
@@ -70,7 +70,6 @@ export class Mode1Handler {
 
   start() {
     this.socks5ServerInstance = this.startSocks5();
-    this.printStartupInfo();
   }
 
   async stop() {
@@ -121,7 +120,7 @@ export class Mode1Handler {
     onClose: () => void,
   ): Promise<Tunnel> {
     return new Promise((resolve, reject) => {
-      const wsProto = this.config.remoteProtocol === 'https' ? 'wss' : 'ws';
+      const wsProto = resolveWsProtocol(this.config.remoteHost);
       const url = wsProto + '://' + this.config.remoteHost + ':' + this.config.remotePort + '/tunnel';
       const ws = new WebSocket(url);
       let settled = false;
@@ -208,12 +207,4 @@ export class Mode1Handler {
     });
   }
 
-  private printStartupInfo() {
-    log("============================================");
-    log("Mode1 加密代理已启动");
-    log("  SOCKS5 代理:   socks5://" + this.config.bindHost + ":" + this.config.socks5Port);
-    log("  WebSocket 隧道: " + this.config.remoteProtocol + "://" + this.config.remoteHost + ":" + this.config.remotePort + "/tunnel");
-    log("  协议检测:      HTTPS / HTTP / WebSocket / TCP (统一隧道)");
-    log("============================================");
-  }
 }
