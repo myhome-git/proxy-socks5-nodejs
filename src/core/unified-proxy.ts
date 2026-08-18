@@ -5,8 +5,9 @@
  * 并内置 WebSocket 加密隧道能力，直接连接远程 Mode2 解密端。
  *
  * 根据客户端首字节自动检测协议类型：
- *   0x05 → SOCKS5 代理
- *   其他 → HTTP 代理 (GET/POST/CONNECT)
+ *   0x05               => SOCKS5 代理
+ *   'C'/'G'/'P'/'D'/'H'/'O'/'T' => HTTP 代理 (CONNECT/GET/POST/...)
+ *   其他（如 0x16 TLS） => 拒绝连接
  *
  * 浏览器流量统一通过 WebSocket 加密隧道转发到 Mode2。
  */
@@ -24,51 +25,26 @@ import {
 } from "../security/sbox.js";
 
 /**
- * 检测代理协议类型
- * @param firstByte 客户端发送的第一个字节
- * @returns "socks5" 或 "http"
+ * 客户端接入协议识别
+ * 第一层：用户 Client 的连接方式
+ * 
+ * 根据首字节识别客户端通过什么协议接入代理：
+ *   socks5 — 首字节 0x05（SOCKS5 协议版本号）
+ *   http   — HTTP 方法首字母（C/CONNECT, G/GET, P/POST/PUT/PATCH, D/DELETE, H/HEAD, O/OPTIONS, T/TRACE）
+ *   其他   — undefined（不支持，如 0x16 TLS/HTTPS 代理接入）
+ * 
+ * @param hexCode 首字节的十六进制字符串，例如 "0x05"
+ * @returns "socks5" | "http" | undefined
  */
-function detectProxyProtocol(firstByte: number): "socks5" | "http" {
-  if (firstByte === 0x05) return "socks5";
-  return "http";
-}
+const PROTOCOL_CODE = {
+  socks5: ['0x05'],
+  http: ['0x43', '0x47', '0x50', '0x44', '0x48', '0x4f', '0x54'], // C G P D H O T
+};
 
-// ============================================================
-// 浏览器协议检测（从 mode1-handler.ts 移入）
-// ============================================================
-
-/**
- * 协议检测结果
- */
-export type DetectedProtocol = "https" | "http" | "websocket" | "tcp";
-
-/**
- * 检测浏览器协议类型（根据数据内容，而非端口）
- */
-export function detectProtocol(data: Buffer): DetectedProtocol {
-  if (data.length === 0) return "tcp";
-
-  const firstByte = data[0]!;
-
-  // TLS ClientHello (HTTPS) — 首字节 0x16
-  if (firstByte === 0x16) return "https";
-
-  // HTTP 文本协议 — 检查常见 HTTP 方法
-  const head = data.slice(0, Math.min(data.length, 128)).toString("utf-8").toLowerCase();
-  if (
-    head.startsWith("get ") || head.startsWith("post ") ||
-    head.startsWith("put ") || head.startsWith("delete ") ||
-    head.startsWith("head ") || head.startsWith("patch ") ||
-    head.startsWith("options ")
-  ) {
-    if (head.includes("upgrade") && head.includes("websocket")) {
-      return "websocket";
-    }
-    return "http";
-  }
-
-  if (head.startsWith("http/")) return "http";
-  return "tcp";
+function detectProtocol(hexCode: string): "socks5" | "http" | undefined {
+  if (PROTOCOL_CODE.socks5.includes(hexCode)) return "socks5";
+  if (PROTOCOL_CODE.http.includes(hexCode)) return "http";
+  return undefined;
 }
 
 /**
@@ -105,8 +81,6 @@ export class UnifiedProxyServer {
       onData: (data: Buffer) => void,
       onClose: () => void,
     ): Promise<Tunnel> => {
-      const protocol = detectProtocol(firstData);
-      log(`统一代理 [${protocol}] ${host}:${tport} (${firstData.length} bytes)`);
       return this.openWSTunnel(host, tport, firstData, onData, onClose);
     };
 
@@ -128,17 +102,29 @@ export class UnifiedProxyServer {
           return;
         }
 
+        // 暂停 socket 流，防止在异步隧道建立期间数据丢失
+        clientSocket.pause();
+
+        // 根据首字节识别客户端接入协议（http / socks5）
         const firstByte = firstChunk[0]!;
-        const protocol = detectProxyProtocol(firstByte);
+        const hexByte = `0x${firstByte.toString(16).padStart(2, "0")}`;
+        const protocol = detectProtocol(hexByte);
 
         if (this.config.debugLog) {
-          log(`统一代理: 检测到协议 ${protocol} (0x${firstByte.toString(16)})`);
+          log(`统一代理: 检测到协议 ${protocol ?? "unknown"} (${hexByte})`);
         }
 
         if (protocol === "socks5") {
           this.socks5Server.handleSocket(clientSocket, firstChunk);
-        } else {
+          clientSocket.resume(); // SOCKS5 自己管理数据流，需要恢复接收
+        } else if (protocol === "http") {
           this.httpProxyServer.handleSocket(clientSocket, firstChunk);
+          // http-proxy 会在隧道建立完成后在 startForwarding() 中调用 resume()
+        } else {
+          // 无法识别的协议（包括 0x16 TLS/HTTPS 代理接入），安全关闭连接
+          this.sockets.delete(clientSocket);
+          clientSocket.destroy();
+          log(`统一代理: 无法识别的协议 (${hexByte})，连接已关闭`, "WARN");
         }
       });
 
@@ -178,7 +164,7 @@ export class UnifiedProxyServer {
   }
 
   // ============================================================
-  // WebSocket 加密隧道（从 mode1-handler.ts 移入）
+  // WebSocket 加密隧道
   // ============================================================
 
   /**
@@ -191,29 +177,27 @@ export class UnifiedProxyServer {
     onClose: () => void,
   ): Promise<Tunnel> {
     const wsUrl = `${this.config.remoteProtocol}://${this.config.remoteHost}:${this.config.remotePort}/tunnel`;
-
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(wsUrl);
       let established = false;
       let closed = false;
-      const pendingData: Buffer[] = [];
+      let connectTimer: NodeJS.Timeout | null = null;
 
       const safeClose = () => {
         if (closed) return;
         closed = true;
+        if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; }
         try { ws.close(); } catch {}
       };
 
       ws.on("open", () => {
+        // 发送隧道建立命令（携带目标 host:port）
         const tunnelCmd = serializeTunnelRequest(host, port);
         const encrypted = pack(tunnelCmd, this.config.encryptKey);
         ws.send(encrypted);
-
-        for (const d of pendingData) {
-          const encryptedData = packTunnelData(d, this.config.encryptKey);
-          ws.send(encryptedData);
+        if (this.config.debugLog) {
+          log(`Mode1 -> Mode2 ${host}:${port} 原始（bytes）: ${tunnelCmd.length} 加密（bytes）: ${encrypted.length}`);
         }
-        pendingData.length = 0;
       });
 
       ws.on("message", (data) => {
@@ -226,7 +210,7 @@ export class UnifiedProxyServer {
               const cmd = parseCommand(result.data);
               if (cmd.type === "tunnel_ok") {
                 established = true;
-                log(`WebSocket 隧道 ${host}:${port} 建立成功`);
+                log(`Mode1 -> Mode2 隧道 ${host}:${port} 建立成功`);
 
                 if (firstData.length > 0) {
                   const encryptedFirst = packTunnelData(firstData, this.config.encryptKey);
@@ -256,9 +240,14 @@ export class UnifiedProxyServer {
           const result = tryUnpackTunnelData(buf, this.config.encryptKey);
           if (result) {
             if (this.config.debugLog) {
-              log(`隧道响应内容 ${host}:${port} 解密（bytes）: ${result.data.length}`);
+              log(`Mode1 <- Mode2 响应内容 ${host}:${port} 原始（bytes）: ${buf.length} 解密（bytes）: ${result.data.length}`);
             }
             onData(result.data);
+          } else {
+            // 无法解密的数据（可能被篡改或 Mode2 已失联），关闭隧道
+            log(`Mode1 <- Mode2 隧道数据解密失败，关闭隧道: ${host}:${port}`, "WARN");
+            safeClose();
+            onClose();
           }
         }
       });
@@ -273,18 +262,18 @@ export class UnifiedProxyServer {
       ws.on("error", (err) => {
         if (!closed) {
           closed = true;
-          log(`WebSocket 连接错误: ${err.message}`, "ERROR");
+          log(`Mode1 -> Mode2 隧道连接错误: ${err.message}`, "ERROR");
           onClose();
           reject(err);
         }
       });
 
       // 超时处理
-      setTimeout(() => {
+      connectTimer = setTimeout(() => {
         if (!established && !closed) {
           closed = true;
-          log(`WebSocket 隧道建立超时: ${host}:${port}`, "WARN");
-          ws.close();
+          log(`Mode1 -> Mode2 隧道建立超时: ${host}:${port}`, "WARN");
+          try { ws.close(); } catch {}
           onClose();
           reject(new Error("Tunnel establishment timeout"));
         }

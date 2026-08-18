@@ -21,6 +21,10 @@ export class Mode2Handler {
   private wss: WebSocketServer | null = null;
   private config: AppConfig;
   private encryptKey: Buffer;
+  /** 活跃的目标 TCP 连接集合，stop() 时统一关闭 */
+  private activeTargets = new Set<net.Socket>();
+  /** 首消息超时（毫秒）：WS 连接建立后等待第一条隧道命令 */
+  private static readonly FIRST_MESSAGE_TIMEOUT = 30000;
 
   constructor(config: AppConfig, encryptKey: Buffer) {
     this.config = config;
@@ -61,9 +65,18 @@ export class Mode2Handler {
   async stop() {
     log("Mode2 正在关闭服务...", "INFO");
     if (this.wss) {
+      // 强制关闭所有已建立的 WebSocket 连接
+      for (const client of this.wss.clients) {
+        try { client.terminate(); } catch {}
+      }
       this.wss.close();
       this.wss = null;
     }
+    // 强制关闭所有目标 TCP 连接
+    for (const target of this.activeTargets) {
+      try { target.destroy(); } catch {}
+    }
+    this.activeTargets.clear();
     if (this.httpServer) {
       await new Promise<void>((resolve) => {
         this.httpServer!.close(() => resolve());
@@ -81,8 +94,16 @@ export class Mode2Handler {
   private handleWebSocket(ws: WebSocket) {
     log("Mode2 WebSocket 隧道连接建立");
 
+    // 首消息超时保护：客户端连接后必须在规定时间内发送有效的隧道建立请求，
+    // 否则视为僵尸连接强制关闭，防止资源泄漏
+    const firstMessageTimer = setTimeout(() => {
+      log("Mode2 WS 首消息超时，关闭连接", "WARN");
+      try { ws.close(); } catch {}
+    }, Mode2Handler.FIRST_MESSAGE_TIMEOUT);
+
     // 等待第一条加密消息 (隧道建立请求)
     ws.once("message", (data) => {
+      clearTimeout(firstMessageTimer);
       const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
       const result = tryUnpack(buf, this.encryptKey);
       if (!result) {
@@ -133,6 +154,15 @@ export class Mode2Handler {
         try { target.write(d); } catch {}
       }
       pendingData = [];
+    });
+
+    // 跟踪目标连接，stop() 时统一关闭
+    this.activeTargets.add(target);
+    target.on("close", () => {
+      this.activeTargets.delete(target);
+    });
+    target.on("error", () => {
+      this.activeTargets.delete(target);
     });
 
     // 目标 → 加密 → Mode1

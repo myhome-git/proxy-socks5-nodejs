@@ -68,6 +68,11 @@ export class Socks5Server {
       if (state === "handshake") this.handleHandshake(ws, data);
       else if (state === "request") this.handleRequest(ws, data);
       else if (state === "detect") this.handleDetect(ws, data);
+      else if (state === "connecting") {
+        // 隧道建立期间到达的数据，缓存起来，隧道建立后统一转发
+        const pending = (ws as any)._pendingData as Buffer[] | undefined;
+        if (pending) pending.push(data);
+      }
       else if (state === "forward") {
         const tunnel = (ws as any)._tunnel as Tunnel | null;
         if (tunnel) tunnel.write(data);
@@ -158,10 +163,18 @@ export class Socks5Server {
 
   /**
    * 检测状态：浏览器已发送第一批数据，需要检测协议并创建隧道
+   *
+   * 注意：进入此方法后立即将状态切换为 "connecting"，
+   * 防止 await createTunnel 挂起期间，后续 data 事件再次触发本方法
+   * 导致并发创建多个隧道（隧道泄漏）。
    */
   private async handleDetect(ws: any, data: Buffer) {
     const host = (ws as any)._targetHost as string;
     const port = (ws as any)._targetPort as number;
+
+    // 立即切换到 connecting 状态，缓存期间到达的数据
+    (ws as any)._state = "connecting";
+    (ws as any)._pendingData = [];
 
     try {
       const tunnel = await this.createTunnel(
@@ -172,8 +185,22 @@ export class Socks5Server {
         () => { try { ws.end(); } catch {} },
       );
 
+      // 客户端可能在隧道建立期间已关闭
+      if (ws.destroyed) {
+        log(`SOCKS5 客户端在隧道建立期间已关闭: ${host}:${port}`, "WARN");
+        try { tunnel.close(); } catch {}
+        return;
+      }
+
       (ws as any)._state = "forward";
       (ws as any)._tunnel = tunnel;
+
+      // 发送连接状态缓存的数据
+      const pending = (ws as any)._pendingData as Buffer[];
+      for (const d of pending) {
+        try { tunnel.write(d); } catch {}
+      }
+      (ws as any)._pendingData = [];
     } catch (err) {
       log(`连接目标失败 ${host}:${port} - ${err}`, "ERROR");
       this.cleanup(ws);
