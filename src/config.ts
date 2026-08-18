@@ -69,6 +69,8 @@ export interface AppConfig {
   encryptPassword: string;
   // 加密盐值
   encryptSalt: string;
+  // 调试日志开关
+  debugLog: boolean;
   // Mode1 连接 Mode2 的协议（ws 或 wss）
   remoteProtocol: "ws" | "wss";
   // Mode1 连接 Mode2 的地址（Mode1 用）
@@ -98,6 +100,7 @@ export function loadConfig(): AppConfig {
     httpProxyPort: parseInt(requireEnv("HTTP_PROXY_PORT"), 10),
     encryptPassword: requireEnv("ENCRYPT_PASSWORD"),
     encryptSalt: requireEnv("ENCRYPT_SALT"),
+    debugLog: process.env.DEBUG_LOG === "true",
     remoteProtocol: requireEnv("REMOTE_PROTOCOL") as "ws" | "wss",
     remoteHost: requireEnv("REMOTE_HOST"),
     remotePort: parseInt(requireEnv("REMOTE_PORT"), 10),

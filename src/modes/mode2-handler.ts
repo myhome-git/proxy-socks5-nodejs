@@ -16,6 +16,15 @@ import {
   parseCommand,
 } from "../security/sbox.js";
 
+/**
+ * 生成数据前 N 字节的十六进制预览字符串
+ */
+function hexPreview(data: Buffer, maxBytes: number = 32): string {
+  const len = Math.min(data.length, maxBytes);
+  const hex = data.subarray(0, len).toString("hex").toUpperCase();
+  return hex;
+}
+
 export class Mode2Handler {
   private httpServer: http.Server | null = null;
   private wss: WebSocketServer | null = null;
@@ -127,7 +136,11 @@ export class Mode2Handler {
     // 目标 → 加密 → Mode1
     target.on("data", (targetData) => {
       if (closed) return;
-      try { ws.send(packTunnelData(targetData, this.encryptKey)); } catch {}
+      const encrypted = packTunnelData(targetData, this.encryptKey);
+      if (this.config.debugLog) {
+        log(`Mode2 收到响应内容 ${host}:${port} tcp 原始（bytes）: ${targetData.length}  加密（bytes）: ${encrypted.length}`);
+      }
+      try { ws.send(encrypted); } catch {}
     });
 
     target.on("close", () => {
@@ -156,6 +169,9 @@ export class Mode2Handler {
       const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
       const result = tryUnpackTunnelData(buf, this.encryptKey);
       if (result) {
+        if (this.config.debugLog) {
+          log(`Mode2 收到请求内容 ${host}:${port} tcp 原始（bytes）: ${buf.length}  解密（bytes）: ${result.data.length}`);
+        }
         if (targetConn) {
           try { target.write(result.data); } catch {}
         } else {

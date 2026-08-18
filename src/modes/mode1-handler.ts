@@ -27,6 +27,15 @@ import {
 export type DetectedProtocol = "https" | "http" | "websocket" | "tcp";
 
 /**
+ * 生成数据前 N 字节的十六进制预览字符串
+ */
+function hexPreview(data: Buffer, maxBytes: number = 32): string {
+  const len = Math.min(data.length, maxBytes);
+  const hex = data.subarray(0, len).toString("hex").toUpperCase();
+  return hex;
+}
+
+/**
  * 检测浏览器协议类型（根据数据内容，而非端口）
  */
 export function detectProtocol(data: Buffer): DetectedProtocol {
@@ -112,7 +121,7 @@ export class Mode1Handler {
             log(`Mode1 [${protocol}] ${host}:${port} (${firstData.length} bytes)`);
 
             // 所有协议统一通过 WebSocket 加密隧道
-            return this.openTunnel(host, port, firstData, onData, onClose);
+            return this.openTunnel(host, port, protocol, firstData, onData, onClose);
         };
 
         this.socks5Server = new Socks5Server(createTunnel);
@@ -139,7 +148,7 @@ export class Mode1Handler {
             log(`Mode1 HTTP [${protocol}] ${host}:${port} (${firstData.length} bytes)`);
 
             // 所有协议统一通过 WebSocket 加密隧道
-            return this.openTunnel(host, port, firstData, onData, onClose);
+            return this.openTunnel(host, port, protocol, firstData, onData, onClose);
         };
 
         this.httpProxyServer = new HttpProxyServer(createTunnel);
@@ -157,6 +166,7 @@ export class Mode1Handler {
 
     private openTunnel(
         host: string, port: number,
+        protocol: DetectedProtocol,
         firstData: Buffer,
         onData: (data: Buffer) => void,
         onClose: () => void,
@@ -187,7 +197,11 @@ export class Mode1Handler {
 
                         const tunnel: Tunnel = {
                             write: (d: Buffer) => {
-                                try { ws.send(packTunnelData(d, this.encryptKey)); } catch {}
+                                const encrypted = packTunnelData(d, this.encryptKey);
+                                if (this.config.debugLog) {
+                                    log(`Mode1 收到请求内容 ${host}:${port} ${protocol} 原始（bytes）: ${d.length}  加密（bytes）: ${encrypted.length}`);
+                                }
+                                try { ws.send(encrypted); } catch {}
                             },
                             close: () => {
                                 try { ws.close(); } catch {}
@@ -211,6 +225,9 @@ export class Mode1Handler {
                     if (!settled) {
                         // 隧道还没建立就收到数据？丢弃
                         return;
+                    }
+                    if (this.config.debugLog) {
+                        log(`Mode1 收到响应内容 ${host}:${port} ${protocol} 原始（bytes）: ${raw.length}  解密（bytes）: ${r.data.length}`);
                     }
                     try { onData(r.data); } catch {}
                 }
