@@ -53,6 +53,13 @@ export class HttpProxyServer {
           targetPort = parseInt(addr[1] || "443", 10);
           log(`HTTP CONNECT: ${targetHost}:${targetPort}`);
 
+          // 提取 HTTP 头部结束后的 TLS 数据（浏览器可能在同一个 TCP 包中发送 TLS ClientHello）
+          const headerEnd = data.indexOf("\r\n\r\n");
+          let tlsData = Buffer.alloc(0);
+          if (headerEnd !== -1 && headerEnd + 4 < data.length) {
+            tlsData = Buffer.from(data.subarray(headerEnd + 4));
+          }
+
           // 先创建隧道，确保隧道已就绪后再回复 200
           // 避免竞态条件：如果先回复 200，浏览器立即发送 TLS ClientHello，
           // 但隧道可能还没建好，导致 TLS 握手失败（ERR_SSL_PROTOCOL_ERROR）
@@ -60,7 +67,7 @@ export class HttpProxyServer {
             tunnel = await this.createTunnel(
               targetHost,
               targetPort,
-              Buffer.alloc(0),
+              tlsData,
               (d) => { if (closed) return; try { clientSocket.write(d); } catch {} },
               () => { if (closed) return; closed = true; try { clientSocket.end(); } catch {} },
             );
