@@ -18,23 +18,9 @@ export class HttpProxyServer {
   private createTunnel: TunnelCreator;
 
   constructor(
-    createTunnel?: TunnelCreator,
+    createTunnel: TunnelCreator,
   ) {
-    this.createTunnel =
-      createTunnel ||
-      // 默认回退：直接 TCP 连接（不加密，仅用于无隧道场景）
-      (async (host, port, firstData, onData, onClose) => {
-        const socket = net.createConnection({ host, port }, () => {
-          socket.write(firstData);
-        });
-        socket.on("data", onData);
-        socket.on("close", onClose);
-        socket.on("error", () => onClose());
-        return {
-          write: (d) => { try { socket.write(d); } catch {} },
-          close: () => { try { socket.end(); } catch {} },
-        };
-      });
+    this.createTunnel = createTunnel;
   }
 
   /**
@@ -42,12 +28,10 @@ export class HttpProxyServer {
    * 接管该 Socket 的事件处理，执行 HTTP 代理逻辑
    */
   handleSocket(clientSocket: net.Socket, firstChunk?: Buffer): void {
-    let state: "request" | "connect" | "forward" = "request";
+    let state: "request" | "forward" = "request";
     let targetHost = "";
     let targetPort = 0;
     let tunnel: Tunnel | null = null;
-    let connecting = false;
-    let connectBuffer = Buffer.alloc(0);
     let closed = false;
 
     const processData = async (data: Buffer) => {
@@ -69,9 +53,25 @@ export class HttpProxyServer {
           targetPort = parseInt(addr[1] || "443", 10);
           log(`HTTP CONNECT: ${targetHost}:${targetPort}`);
 
-          // 发送 200 响应，让浏览器开始发送数据
-          try { clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n"); } catch {}
-          state = "connect";
+          // 先创建隧道，确保隧道已就绪后再回复 200
+          // 避免竞态条件：如果先回复 200，浏览器立即发送 TLS ClientHello，
+          // 但隧道可能还没建好，导致 TLS 握手失败（ERR_SSL_PROTOCOL_ERROR）
+          try {
+            tunnel = await this.createTunnel(
+              targetHost,
+              targetPort,
+              Buffer.alloc(0),
+              (d) => { if (closed) return; try { clientSocket.write(d); } catch {} },
+              () => { if (closed) return; closed = true; try { clientSocket.end(); } catch {} },
+            );
+            // 隧道已就绪，回复 200
+            try { clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n"); } catch {}
+            state = "forward";
+          } catch (err) {
+            log(`HTTP CONNECT 隧道建立失败 ${targetHost}:${targetPort}`, "ERROR");
+            closed = true;
+            try { clientSocket.end(); } catch {}
+          }
         } else {
           // 普通 HTTP 请求 (GET/POST 等)
           try {
@@ -94,32 +94,6 @@ export class HttpProxyServer {
             try { clientSocket.write("HTTP/1.1 400 Bad Request\r\n\r\n"); } catch {}
             try { clientSocket.end(); } catch {}
           }
-        }
-      } else if (state === "connect" && !connecting) {
-        // CONNECT 后，浏览器发送 TLS 握手数据
-        connecting = true;
-        connectBuffer = Buffer.concat([connectBuffer, data]);
-
-        try {
-          tunnel = await this.createTunnel(
-            targetHost,
-            targetPort,
-            connectBuffer,
-            (d) => {
-              if (closed) return;
-              try { clientSocket.write(d); } catch {}
-            },
-            () => {
-              if (closed) return;
-              closed = true;
-              try { clientSocket.end(); } catch {}
-            },
-          );
-          state = "forward";
-        } catch (err) {
-          log(`HTTP CONNECT 隧道建立失败 ${targetHost}:${targetPort}`, "ERROR");
-          closed = true;
-          try { clientSocket.end(); } catch {}
         }
       } else if (state === "forward") {
         if (tunnel) {
@@ -149,7 +123,7 @@ export class HttpProxyServer {
     }
   }
 
-  start(port: number, hostname = "127.0.0.1"): net.Server {
+  start(port: number, hostname: string): net.Server {
     const server = net.createServer((client) => {
       this.handleSocket(client);
     });

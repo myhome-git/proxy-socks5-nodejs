@@ -47,27 +47,9 @@ export class Socks5Server {
   private createTunnel: TunnelCreator;
 
   constructor(
-    createTunnel?: TunnelCreator,
+    createTunnel: TunnelCreator,
   ) {
-    this.createTunnel =
-      createTunnel ||
-      // 默认回退：直接 TCP 连接（不加密，仅用于无隧道场景）
-      (async (host, port, firstData, onData, onClose) => {
-        const socket = net.createConnection({ host, port }, () => {
-          // 建立连接后，立即发送第一批数据
-          socket.write(firstData);
-        });
-        socket.on("data", onData);
-        socket.on("close", onClose);
-        socket.on("error", (e) => {
-          log(`目标连接错误 ${host}:${port} - ${e.message}`, "ERROR");
-          onClose();
-        });
-        return {
-          write: (d: Buffer) => { try { socket.write(d); } catch {} },
-          close: () => { try { socket.end(); } catch {} },
-        };
-      });
+    this.createTunnel = createTunnel;
   }
 
   /**
@@ -111,7 +93,7 @@ export class Socks5Server {
     }
   }
 
-  start(port: number, hostname = "127.0.0.1"): net.Server {
+  start(port: number, hostname: string): net.Server {
     const server = net.createServer((ws) => {
       this.handleSocket(ws);
     });
