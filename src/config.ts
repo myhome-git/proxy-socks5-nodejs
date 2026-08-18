@@ -58,11 +58,8 @@ export interface AppConfig {
   // 监听地址
   bindHost: string;
 
-  // SOCKS5 代理端口
-  socks5Port: number;
-
-  // HTTP 代理端口（方案B，与 SOCKS5 分开监听）
-  httpProxyPort: number;
+  // 统一代理端口（同时支持 SOCKS5 和 HTTP 协议）
+  proxyPort: number;
 
   // ===== 加密隧道配置 (Mode1 ↔ Mode2) =====
   // 加密密码（用于派生 AES-256 密钥）
@@ -71,15 +68,15 @@ export interface AppConfig {
   encryptSalt: string;
   // 调试日志开关
   debugLog: boolean;
-  // Mode1 连接 Mode2 的协议（ws 或 wss）
+  // Mode1 连接远程端的协议（WebSocket 加密隧道）
   remoteProtocol: "ws" | "wss";
-  // Mode1 连接 Mode2 的地址（Mode1 用）
+  // Mode1 连接远程端的地址（Mode1 用）
   remoteHost: string;
-  // Mode1 连接 Mode2 的端口（Mode1 用）
+  // Mode1 连接远程端的端口（Mode1 用）
   remotePort: number;
-  // Mode2 监听端口（Mode2 用）
+  // Mode2 监听端口
   encryptListenPort: number;
-  // Mode2 监听地址（Mode2 用）
+  // Mode2 监听地址
   encryptListenHost: string;
 
 }
@@ -96,8 +93,7 @@ export function loadConfig(): AppConfig {
   const config: AppConfig = {
     proxyMode: requireEnv("PROXY_MODE") as "mode1" | "mode2",
     bindHost: requireEnv("BIND_HOST"),
-    socks5Port: parseInt(requireEnv("SOCKS5_PORT"), 10),
-    httpProxyPort: parseInt(requireEnv("HTTP_PROXY_PORT"), 10),
+    proxyPort: parseInt(requireEnv("PROXY_PORT"), 10),
     encryptPassword: requireEnv("ENCRYPT_PASSWORD"),
     encryptSalt: requireEnv("ENCRYPT_SALT"),
     debugLog: process.env.DEBUG_LOG === "true",
@@ -112,24 +108,23 @@ export function loadConfig(): AppConfig {
 }
 
 /**
- * 返回手动配置的 WebSocket 协议
+ * 返回远程协议前缀
  */
 export function resolveWsProtocol(config: AppConfig): "ws" | "wss" {
   return config.remoteProtocol;
 }
 
 export function printConfig(config: AppConfig) {
-  const wsProto = resolveWsProtocol(config);
+  const proto = resolveWsProtocol(config);
   log("============================================");
   log(`代理配置 (模式: ${config.proxyMode})`);
   
   if (config.proxyMode === "mode1") {
-    log(`  SOCKS5 代理:   ${config.bindHost}:${config.socks5Port}`);
-    log(`  HTTP 代理:     ${config.bindHost}:${config.httpProxyPort}`);
-    log(`  加密隧道:      → ${wsProto}://${config.remoteHost}:${config.remotePort}`);
+    log(`  统一代理端口:  ${config.bindHost}:${config.proxyPort} (SOCKS5 + HTTP 自动检测)`);
+    log(`  加密隧道:      → ${proto}://${config.remoteHost}:${config.remotePort}/tunnel (WebSocket 隧道)`);
     log(`  协议检测:      HTTPS / HTTP / WebSocket / TCP (统一隧道)`);
   } else {
-    log(`  WebSocket 隧道: ${wsProto}://${config.encryptListenHost}:${config.encryptListenPort}/tunnel`);
+    log(`  WebSocket 隧道: ${proto}://${config.encryptListenHost}:${config.encryptListenPort}/tunnel`);
   }
   log("============================================");
 }

@@ -136,30 +136,10 @@ export function tryUnpackTunnelData(buffer: Buffer, key: Buffer): { data: Buffer
 // ============================================================
 
 /**
- * 序列化HTTP请求
- */
-export function serializeHttpRequest(method: string, url: string, headers: Record<string, string>, body?: Buffer): Buffer {
-  return Buffer.from(
-    `HTTP\n${method}\n${url}\n${JSON.stringify(headers)}\n${body ? body.toString("base64") : ""}`,
-    "utf-8",
-  );
-}
-
-/**
  * 序列化隧道建立请求
  */
 export function serializeTunnelRequest(host: string, port: number): Buffer {
   return Buffer.from(`TUNNEL\n${host}\n${port}`, "utf-8");
-}
-
-/**
- * 序列化HTTP响应
- */
-export function serializeHttpResponse(statusCode: number, headers: Record<string, string>, body?: Buffer): Buffer {
-  return Buffer.from(
-    `RESP\n${statusCode}\n${JSON.stringify(headers)}\n${body ? body.toString("base64") : ""}`,
-    "utf-8",
-  );
 }
 
 /**
@@ -176,25 +156,10 @@ export function serializeClose(): Buffer {
   return Buffer.from("CLOSE", "utf-8");
 }
 
-export interface ParsedHttpRequest {
-  type: "http";
-  method: string;
-  url: string;
-  headers: Record<string, string>;
-  body?: Buffer;
-}
-
 export interface ParsedTunnelRequest {
   type: "tunnel";
   host: string;
   port: number;
-}
-
-export interface ParsedHttpResponse {
-  type: "resp";
-  statusCode: number;
-  headers: Record<string, string>;
-  body?: Buffer;
 }
 
 export interface ParsedTunnelOk {
@@ -205,7 +170,7 @@ export interface ParsedClose {
   type: "close";
 }
 
-export type ParsedCommand = ParsedHttpRequest | ParsedTunnelRequest | ParsedHttpResponse | ParsedTunnelOk | ParsedClose;
+export type ParsedCommand = ParsedTunnelRequest | ParsedTunnelOk | ParsedClose;
 
 /**
  * 解析命令帧
@@ -216,25 +181,10 @@ export function parseCommand(data: Buffer): ParsedCommand {
   const type = lines[0] || "";
 
   switch (type) {
-    case "HTTP": {
-      const method = lines[1] || "";
-      const url = lines[2] || "";
-      const headers = JSON.parse(lines[3] || "{}");
-      const bodyBase64 = lines.slice(4).join("\n");
-      const body = bodyBase64 ? Buffer.from(bodyBase64, "base64") : undefined;
-      return { type: "http", method, url, headers, body };
-    }
     case "TUNNEL": {
       const host = lines[1] || "";
       const port = parseInt(lines[2] || "0", 10);
       return { type: "tunnel", host, port };
-    }
-    case "RESP": {
-      const statusCode = parseInt(lines[1] || "200", 10);
-      const headers = JSON.parse(lines[2] || "{}");
-      const bodyBase64 = lines.slice(3).join("\n");
-      const body = bodyBase64 ? Buffer.from(bodyBase64, "base64") : undefined;
-      return { type: "resp", statusCode, headers, body };
     }
     case "TUNNEL_OK":
       return { type: "tunnel_ok" };

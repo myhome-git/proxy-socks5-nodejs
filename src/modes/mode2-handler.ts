@@ -1,8 +1,8 @@
 /**
  * Mode2 解密端实现
  *
- * 仅 WebSocket /tunnel 服务器，接收 Mode1 的加密隧道请求。
- * 收到隧道建立请求后，连接目标并双向加密转发。
+ * 统一 WebSocket 隧道服务。
+ * 接收 Mode1 的加密 WebSocket 连接，解密后 TCP 转发到目标网站。
  */
 import http from "http";
 import net from "net";
@@ -16,15 +16,6 @@ import {
   parseCommand,
 } from "../security/sbox.js";
 
-/**
- * 生成数据前 N 字节的十六进制预览字符串
- */
-function hexPreview(data: Buffer, maxBytes: number = 32): string {
-  const len = Math.min(data.length, maxBytes);
-  const hex = data.subarray(0, len).toString("hex").toUpperCase();
-  return hex;
-}
-
 export class Mode2Handler {
   private httpServer: http.Server | null = null;
   private wss: WebSocketServer | null = null;
@@ -34,24 +25,37 @@ export class Mode2Handler {
   constructor(config: AppConfig, encryptKey: Buffer) {
     this.config = config;
     this.encryptKey = encryptKey;
+    this.config.encryptListenPort = parseInt(process.env.PORT || String(this.config.encryptListenPort), 10)
   }
 
   start() {
     const server = http.createServer();
 
-    // WebSocket 服务器 (路径 /tunnel)
+    // 健康检查端点
+    server.on("request", (req, res) => {
+      if (req.url === "/health" || req.method === "GET") {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end("OK");
+      }
+    });
+
+    // WebSocket 隧道服务器
     const wss = new WebSocketServer({ server, path: "/tunnel" });
     wss.on("connection", (ws) => {
       this.handleWebSocket(ws);
     });
+    this.wss = wss;
 
-    server.listen(this.config.encryptListenPort, this.config.encryptListenHost, () => {
-      log(`Mode2 服务器已启动: ${this.config.encryptListenHost}:${this.config.encryptListenPort}`);
-      log(`  WebSocket 隧道: /tunnel`);
+    // 使用云平台端口（PORT 环境变量）或配置端口
+    const port = this.config.encryptListenPort;
+    const host = this.config.encryptListenHost;
+
+    server.listen(port, host, () => {
+      log(`Mode2 服务器已启动: ${host}:${port}`);
+      log(`  WebSocket 隧道路径: /tunnel`);
     });
 
     this.httpServer = server;
-    this.wss = wss;
   }
 
   async stop() {
@@ -71,38 +75,36 @@ export class Mode2Handler {
   }
 
   // ============================================================
-  // WebSocket /tunnel — 处理所有隧道流量
+  // WebSocket 隧道处理
   // ============================================================
 
   private handleWebSocket(ws: WebSocket) {
     log("Mode2 WebSocket 隧道连接建立");
 
-    let targetConn: net.Socket | null = null;
+    // 等待第一条加密消息 (隧道建立请求)
+    ws.once("message", (data) => {
+      const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+      const result = tryUnpack(buf, this.encryptKey);
+      if (!result) {
+        log("Mode2 WS 隧道解密失败", "ERROR");
+        ws.close();
+        return;
+      }
 
-      // 等待第一条加密消息 (隧道建立请求)
-      ws.once("message", (data) => {
-        const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
-        const result = tryUnpack(buf, this.encryptKey);
-        if (!result) {
-          log("Mode2 WS 隧道解密失败", "ERROR");
-          ws.close();
-          return;
-        }
-
-        try {
-          const cmd = parseCommand(result.data);
-          if (cmd.type === "tunnel") {
-            // 建立到目标的 TCP 连接
-            this.connectTarget(ws, cmd.host, cmd.port);
-          } else {
-            log(`Mode2 WS 未知命令类型: ${cmd.type}`, "WARN");
-            ws.close();
-          }
-        } catch (err) {
-          log(`Mode2 WS 命令解析失败: ${err}`, "ERROR");
+      try {
+        const cmd = parseCommand(result.data);
+        if (cmd.type === "tunnel") {
+          // 建立到目标的 TCP 连接
+          this.connectTarget(ws, cmd.host, cmd.port);
+        } else {
+          log(`Mode2 WS 未知命令类型: ${cmd.type}`, "WARN");
           ws.close();
         }
-      });
+      } catch (err) {
+        log(`Mode2 WS 命令解析失败: ${err}`, "ERROR");
+        ws.close();
+      }
+    });
 
     ws.on("error", () => {});
   }

@@ -70,34 +70,50 @@ export class Socks5Server {
       });
   }
 
+  /**
+   * 处理已连接的 Socket（用于统一代理服务器）
+   * 初始化 SOCKS5 状态机，并接管该 Socket 的事件处理
+   */
+  handleSocket(ws: net.Socket, firstChunk?: Buffer): void {
+    (ws as any)._state = "handshake";
+    (ws as any)._buffer = Buffer.alloc(0);
+    (ws as any)._targetHost = "";
+    (ws as any)._targetPort = 0;
+    (ws as any)._targetSocket = null;
+
+    ws.on("data", (data) => {
+      const state = (ws as any)._state;
+      if (state === "handshake") this.handleHandshake(ws, data);
+      else if (state === "request") this.handleRequest(ws, data);
+      else if (state === "detect") this.handleDetect(ws, data);
+      else if (state === "forward") {
+        const tunnel = (ws as any)._tunnel as Tunnel | null;
+        if (tunnel) tunnel.write(data);
+      }
+    });
+
+    ws.on("close", () => {
+      const tunnel = (ws as any)._tunnel as Tunnel | null;
+      if (tunnel) { try { tunnel.close(); } catch {} }
+    });
+
+    ws.on("error", (error) => {
+      log(`SOCKS5 错误: ${error.message}`, "ERROR");
+      this.cleanup(ws);
+    });
+
+    // 如果有第一批数据，重新触发 data 事件
+    if (firstChunk && firstChunk.length > 0) {
+      // 使用 process.nextTick 确保事件监听器已注册
+      process.nextTick(() => {
+        ws.emit("data", firstChunk);
+      });
+    }
+  }
+
   start(port: number, hostname = "127.0.0.1"): net.Server {
     const server = net.createServer((ws) => {
-      (ws as any)._state = "handshake";
-      (ws as any)._buffer = Buffer.alloc(0);
-      (ws as any)._targetHost = "";
-      (ws as any)._targetPort = 0;
-      (ws as any)._targetSocket = null;
-
-      ws.on("data", (data) => {
-        const state = (ws as any)._state;
-        if (state === "handshake") this.handleHandshake(ws, data);
-        else if (state === "request") this.handleRequest(ws, data);
-        else if (state === "detect") this.handleDetect(ws, data);
-        else if (state === "forward") {
-          const tunnel = (ws as any)._tunnel as Tunnel | null;
-          if (tunnel) tunnel.write(data);
-        }
-      });
-
-      ws.on("close", () => {
-        const tunnel = (ws as any)._tunnel as Tunnel | null;
-        if (tunnel) { try { tunnel.close(); } catch {} }
-      });
-
-      ws.on("error", (error) => {
-        log(`SOCKS5 错误: ${error.message}`, "ERROR");
-        this.cleanup(ws);
-      });
+      this.handleSocket(ws);
     });
 
     server.listen(port, hostname, () => {
