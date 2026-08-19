@@ -70,6 +70,7 @@ export class UnifiedProxyServer {
     private httpProxyServer: HttpProxyServer;
     private server: net.Server | null = null;
     private sockets = new Set<net.Socket>();
+    private wsConnections = new Set<WebSocket>();
     private config: UnifiedProxyConfig;
 
     constructor(config: UnifiedProxyConfig) {
@@ -153,6 +154,12 @@ export class UnifiedProxyServer {
         }
         this.sockets.clear();
 
+        // 关闭所有活跃的 WebSocket 隧道连接
+        for (const ws of this.wsConnections) {
+            try { ws.terminate(); } catch { }
+        }
+        this.wsConnections.clear();
+
         return new Promise((resolve) => {
             if (this.server) {
                 this.server.close(() => resolve());
@@ -192,7 +199,17 @@ export class UnifiedProxyServer {
                 try { ws.close(); } catch { }
             };
 
+            // 追踪 WebSocket 实例，用于 stop() 统一清理
+            this.wsConnections.add(ws);
+            ws.once("close", () => this.wsConnections.delete(ws));
+            ws.once("error", () => this.wsConnections.delete(ws));
+
             ws.on("open", () => {
+                // 连接已超时/出错，忽略此 open 事件
+                if (closed) {
+                    try { ws.close(); } catch { }
+                    return;
+                }
                 if (connectTimer) clearTimeout(connectTimer);
 
                 // 发送隧道建立命令（携带目标 host:port）

@@ -104,7 +104,11 @@ export class Mode2Handler {
         // 等待第一条加密消息 (隧道建立请求)
         ws.once("message", (data) => {
             clearTimeout(firstMessageTimer);
-            const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+            const buf = Buffer.isBuffer(data)
+                ? data
+                : Array.isArray(data)
+                    ? Buffer.concat(data)
+                    : Buffer.from(data);
             const result = tryUnpack(buf, this.encryptKey);
             if (!result) {
                 log("Mode2 WS 隧道解密失败", "ERROR");
@@ -197,7 +201,11 @@ export class Mode2Handler {
         // Mode1 加密数据 → 解密 → 目标
         ws.on("message", (data) => {
             if (closed) return;
-            const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+            const buf = Buffer.isBuffer(data)
+                ? data
+                : Array.isArray(data)
+                    ? Buffer.concat(data)
+                    : Buffer.from(data);
             const result = tryUnpackTunnelData(buf, this.encryptKey);
             if (result) {
                 if (this.config.debugLog) {
