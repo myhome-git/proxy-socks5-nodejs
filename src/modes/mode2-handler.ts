@@ -17,7 +17,7 @@ import {
 } from "../security/sbox.js";
 
 export class Mode2Handler {
-    private httpServer: http.Server | null = null;
+    private proxyServer: http.Server | null = null;
     private wss: WebSocketServer | null = null;
     private config: AppConfig;
     private encryptKey: Buffer;
@@ -59,7 +59,7 @@ export class Mode2Handler {
             log(`  WebSocket 隧道路径: /tunnel`);
         });
 
-        this.httpServer = server;
+        this.proxyServer = server;
     }
 
     async stop() {
@@ -77,12 +77,12 @@ export class Mode2Handler {
             try { target.destroy(); } catch { }
         }
         this.activeTargets.clear();
-        if (this.httpServer) {
+        if (this.proxyServer) {
             await new Promise<void>((resolve) => {
-                this.httpServer!.close(() => resolve());
-                this.httpServer!.unref();
+                this.proxyServer!.close(() => resolve());
+                this.proxyServer!.unref();
             });
-            this.httpServer = null;
+            this.proxyServer = null;
         }
         log("Mode2 服务已关闭", "INFO");
     }
@@ -134,7 +134,6 @@ export class Mode2Handler {
      * 连接到目标服务器，并处理双向加密转发
      */
     private connectTarget(ws: WebSocket, host: string, port: number) {
-        log(`Mode2 隧道建立: ${host}:${port}`);
 
         let closed = false;
         // 缓存建立连接前收到的隧道数据
@@ -142,7 +141,7 @@ export class Mode2Handler {
         let targetConn: net.Socket | null = null;
 
         const target = net.createConnection({ host, port }, () => {
-            log(`Mode2 隧道建立成功: ${host}:${port}`);
+            log(`Mode2 目标连接成功: ${host}:${port}`);
 
             // 发送隧道建立成功响应
             try {
@@ -236,5 +235,9 @@ export class Mode2Handler {
         });
 
         targetConn = target;
+    }
+
+    getServer() {
+        return this.proxyServer
     }
 }

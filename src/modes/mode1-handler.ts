@@ -39,4 +39,8 @@ export class Mode1Handler {
         }
         log("Mode1 服务已关闭", "INFO");
     }
+
+    getServer() {
+        return this.proxyServer
+    }
 }

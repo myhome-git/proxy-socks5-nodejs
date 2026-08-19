@@ -207,7 +207,7 @@ export class UnifiedProxyServer {
                             const cmd = parseCommand(result.data);
                             if (cmd.type === "tunnel_ok") {
                                 established = true;
-                                log(`Mode1 -> Mode2 隧道 ${host}:${port} 建立成功`);
+                                log(`Mode1 -> Mode2 连接成功 ${host}:${port}`);
 
                                 if (firstData.length > 0) {
                                     const encryptedFirst = packTunnelData(firstData, this.config.encryptKey);
@@ -250,7 +250,7 @@ export class UnifiedProxyServer {
                         onData(result.data);
                     } else {
                         // 无法解密的数据（可能被篡改或 Mode2 已失联），关闭隧道
-                        log(`Mode1 <- Mode2 隧道数据解密失败，关闭隧道: ${host}:${port}`, "WARN");
+                        log(`Mode1 <- Mode2 数据解密失败，关闭连接: ${host}:${port}`, "WARN");
                         safeClose();
                         onClose();
                     }
@@ -267,7 +267,7 @@ export class UnifiedProxyServer {
             ws.on("error", (err) => {
                 if (!closed) {
                     closed = true;
-                    log(`Mode1 -> Mode2 隧道连接错误: ${err.message}`, "ERROR");
+                    log(`Mode1 -> Mode2 连接错误: ${err.message}`, "ERROR");
                     onClose();
                     reject(err);
                 }
@@ -277,7 +277,7 @@ export class UnifiedProxyServer {
             connectTimer = setTimeout(() => {
                 if (!established && !closed) {
                     closed = true;
-                    log(`Mode1 -> Mode2 隧道建立超时: ${host}:${port}`, "WARN");
+                    log(`Mode1 -> Mode2 建立连接超时: ${host}:${port}`, "WARN");
                     try { ws.close(); } catch { }
                     onClose();
                     reject(new Error("Tunnel establishment timeout"));

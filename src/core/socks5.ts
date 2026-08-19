@@ -156,7 +156,7 @@ export class Socks5Server {
         log(`SOCKS5 CONNECT: ${host}:${port}`);
 
         // 立即响应 SOCKS5 成功，让浏览器开始发送数据
-        this.sendReply(ws, REP_SUCCESS, host, port);
+        this.sendReply(ws, REP_SUCCESS);
         // 切换到"检测"状态，等待浏览器发送第一批数据
         (ws as any)._state = "detect";
     }
@@ -207,12 +207,16 @@ export class Socks5Server {
         }
     }
 
-    private sendReply(ws: any, rep: number, host = "0.0.0.0", port = 0) {
+    private sendReply(ws: any, rep: number) {
         const buf = Buffer.alloc(10);
         buf[0] = SOCKS_VERSION; buf[1] = rep; buf[2] = 0x00; buf[3] = ATYP_IPV4;
-        const parts = host.split(".");
+
+        // 从 socket 本地地址提取绑定地址
+        const wsHost = ws.localAddress
+        const wsPort = ws.localPort
+        const parts = wsHost.split(".");
         for (let i = 0; i < 4; i++) buf[4 + i] = parseInt(parts[i] || "0", 10);
-        buf[8] = (port >> 8) & 0xff; buf[9] = port & 0xff;
+        buf[8] = (wsPort >> 8) & 0xff; buf[9] = wsPort & 0xff;
         try { ws.write(buf); } catch { }
     }
 
