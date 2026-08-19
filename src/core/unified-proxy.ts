@@ -182,23 +182,43 @@ export class UnifiedProxyServer {
             let established = false;
             let closed = false;
             let connectTimer: NodeJS.Timeout | null = null;
+            let responseTimer: NodeJS.Timeout | null = null;
 
             const safeClose = () => {
                 if (closed) return;
                 closed = true;
                 if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; }
+                if (responseTimer) { clearTimeout(responseTimer); responseTimer = null; }
                 try { ws.close(); } catch { }
             };
 
             ws.on("open", () => {
+                if (connectTimer) clearTimeout(connectTimer);
+
                 // 发送隧道建立命令（携带目标 host:port）
                 const tunnelCmd = serializeTunnelRequest(host, port);
                 const encrypted = pack(tunnelCmd, this.config.encryptKey);
                 ws.send(encrypted);
+
+                // 阶段 2：等待 tunnel_ok 超时（15s）
+                responseTimer = setTimeout(() => {
+                    if (!established && !closed) {
+                        closed = true;
+                        log(`Mode1 -> Mode2 隧道协商超时: ${host}:${port}`, "WARN");
+                        safeClose();
+                        onClose();
+                        reject(new Error("Tunnel response timeout"));
+                    }
+                }, 15000);
             });
 
             ws.on("message", (data) => {
-                const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+                // const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+                const buf = Buffer.isBuffer(data)
+                    ? data
+                    : Array.isArray(data)
+                        ? Buffer.concat(data)
+                        : Buffer.from(data);
 
                 if (!established) {
                     const result = tryUnpack(buf, this.config.encryptKey);
@@ -207,6 +227,7 @@ export class UnifiedProxyServer {
                             const cmd = parseCommand(result.data);
                             if (cmd.type === "tunnel_ok") {
                                 established = true;
+                                if (responseTimer) { clearTimeout(responseTimer); responseTimer = null; }
                                 log(`Mode1 -> Mode2 连接成功 ${host}:${port}`);
 
                                 if (firstData.length > 0) {
@@ -262,6 +283,8 @@ export class UnifiedProxyServer {
                     closed = true;
                     onClose();
                 }
+                if (connectTimer) clearTimeout(connectTimer);
+                if (responseTimer) clearTimeout(responseTimer);
             });
 
             ws.on("error", (err) => {
@@ -271,13 +294,15 @@ export class UnifiedProxyServer {
                     onClose();
                     reject(err);
                 }
+                if (connectTimer) clearTimeout(connectTimer);
+                if (responseTimer) clearTimeout(responseTimer);
             });
 
             // 超时处理
             connectTimer = setTimeout(() => {
                 if (!established && !closed) {
                     closed = true;
-                    log(`Mode1 -> Mode2 建立连接超时: ${host}:${port}`, "WARN");
+                    log(`Mode1 -> Mode2 隧道建立连接超时: ${host}:${port}`, "WARN");
                     try { ws.close(); } catch { }
                     onClose();
                     reject(new Error("Tunnel establishment timeout"));
