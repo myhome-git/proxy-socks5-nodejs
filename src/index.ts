@@ -12,8 +12,21 @@ import { ProxyModeServer } from "./modes/proxy-modes.js";
 const config: AppConfig = loadConfig();
 printConfig(config);
 
-const server = new ProxyModeServer(config);
+/**
+ * Node.js 版本检测
+ * ws 模块和 esbuild 编译目标要求 Node.js 20+，低版本无法正常运行
+ */
+const REQUIRED_NODE_MAJOR = 20;
+const nodeMajor = parseInt(`${process.versions.node ?? "0"}`.split(".")[0] ?? "0", 10);
+if (nodeMajor < REQUIRED_NODE_MAJOR) {
+    log(`当前 Node.js 版本 ${process.versions.node} 过低，本项目要求 Node.js ${REQUIRED_NODE_MAJOR}+`, "ERROR");
+    log(`ws 模块和构建产物依赖 Node.js 20+ 特性，请升级 Node.js：https://nodejs.org/`, "ERROR");
+    process.exit(1);
+}
+
 log("正在启动服务...", "INFO");
+
+const server = new ProxyModeServer(config);
 server.start();
 
 // 热更新 / 优雅关闭
