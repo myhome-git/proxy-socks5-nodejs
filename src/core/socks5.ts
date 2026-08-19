@@ -202,7 +202,7 @@ export class Socks5Server {
             }
             (ws as any)._pendingData = [];
         } catch (err) {
-            log(`连接目标失败 ${host}:${port} - ${err}`, "ERROR");
+            // log(`连接目标失败 ${host}:${port} - ${err}`, "ERROR");
             this.cleanup(ws);
         }
     }

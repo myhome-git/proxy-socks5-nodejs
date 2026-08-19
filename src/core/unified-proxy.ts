@@ -23,6 +23,7 @@ import {
     packTunnelData, tryUnpackTunnelData,
     serializeTunnelRequest, parseCommand,
 } from "../security/sbox.js";
+import { HeartbeatOptions } from "../utils/heartbeat.js";
 
 /**
  * 客户端接入协议识别
@@ -211,6 +212,17 @@ export class UnifiedProxyServer {
                     return;
                 }
                 if (connectTimer) clearTimeout(connectTimer);
+
+                // 启动心跳检测（WS 建立成功即开始，覆盖完整生命周期）
+                // 心跳通过 pong 或 message 重置失败计数，tunnel_ok 通过 message 接收，不会冲突
+                new HeartbeatOptions({
+                    ws,
+                    onDead: () => {
+                        log(`Mode1 心跳检测到 Mode2 失联: ${host}:${port}`);
+                        safeClose();
+                        onClose();
+                    },
+                });
 
                 // 发送隧道建立命令（携带目标 host:port）
                 const tunnelCmd = serializeTunnelRequest(host, port);

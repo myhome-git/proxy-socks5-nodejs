@@ -9,6 +9,7 @@ import net from "net";
 import { WebSocketServer, WebSocket } from "ws";
 import { log } from "../utils.js";
 import { type AppConfig } from "../config.js";
+import { HeartbeatOptions } from "../utils/heartbeat.js";
 import {
     pack, tryUnpack,
     packTunnelData, tryUnpackTunnelData,
@@ -132,6 +133,15 @@ export class Mode2Handler {
         });
 
         ws.on("error", () => { });
+
+        // 启动心跳检测，自动检测 Mode1 是否存活
+        new HeartbeatOptions({
+            ws,
+            onDead: () => {
+                log("Mode2 心跳检测到 Mode1 失联，强制关闭连接");
+                try { ws.terminate(); } catch { }
+            },
+        });
     }
 
     /**
