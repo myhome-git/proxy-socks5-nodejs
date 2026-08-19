@@ -22,7 +22,7 @@ const DIGEST = "sha256";
  * 从密码派生 AES-256 密钥
  */
 export function deriveKey(password: string, salt: string): Buffer {
-  return crypto.pbkdf2Sync(password, salt, ITERATIONS, KEY_LENGTH, DIGEST);
+    return crypto.pbkdf2Sync(password, salt, ITERATIONS, KEY_LENGTH, DIGEST);
 }
 
 /**
@@ -30,11 +30,11 @@ export function deriveKey(password: string, salt: string): Buffer {
  * 返回: [16字节IV][密文]
  */
 export function encrypt(plaintext: Buffer | string, key: Buffer): Buffer {
-  const iv = crypto.randomBytes(IV_LENGTH);
-  const cipher = crypto.createCipheriv("aes-256-ctr", key, iv);
-  const input = typeof plaintext === "string" ? Buffer.from(plaintext, "utf-8") : plaintext;
-  const encrypted = Buffer.concat([cipher.update(input), cipher.final()]);
-  return Buffer.concat([iv, encrypted]);
+    const iv = crypto.randomBytes(IV_LENGTH);
+    const cipher = crypto.createCipheriv("aes-256-ctr", key, iv);
+    const input = typeof plaintext === "string" ? Buffer.from(plaintext, "utf-8") : plaintext;
+    const encrypted = Buffer.concat([cipher.update(input), cipher.final()]);
+    return Buffer.concat([iv, encrypted]);
 }
 
 /**
@@ -43,13 +43,13 @@ export function encrypt(plaintext: Buffer | string, key: Buffer): Buffer {
  * 返回: 明文 Buffer
  */
 export function decrypt(data: Buffer, key: Buffer): Buffer {
-  if (data.length < IV_LENGTH + 1) {
-    throw new Error(`数据太短，无法解密: ${data.length} bytes`);
-  }
-  const iv = data.subarray(0, IV_LENGTH);
-  const encrypted = data.subarray(IV_LENGTH);
-  const decipher = crypto.createDecipheriv("aes-256-ctr", key, iv);
-  return Buffer.concat([decipher.update(encrypted), decipher.final()]);
+    if (data.length < IV_LENGTH + 1) {
+        throw new Error(`数据太短，无法解密: ${data.length} bytes`);
+    }
+    const iv = data.subarray(0, IV_LENGTH);
+    const encrypted = data.subarray(IV_LENGTH);
+    const decipher = crypto.createDecipheriv("aes-256-ctr", key, iv);
+    return Buffer.concat([decipher.update(encrypted), decipher.final()]);
 }
 
 // ============================================================
@@ -66,18 +66,18 @@ export function decrypt(data: Buffer, key: Buffer): Buffer {
  *   [4字节: 加密块总大小(仅用于TCP拆包)] + [IV] + [密文]
  */
 export function pack(data: Buffer, key: Buffer): Buffer {
-  // 内部: 4字节原始数据长度 + 原始数据
-  const lenBuf = Buffer.alloc(4);
-  lenBuf.writeUInt32BE(data.length, 0);
-  const inner = Buffer.concat([lenBuf, data]);
+    // 内部: 4字节原始数据长度 + 原始数据
+    const lenBuf = Buffer.alloc(4);
+    lenBuf.writeUInt32BE(data.length, 0);
+    const inner = Buffer.concat([lenBuf, data]);
 
-  // 加密整个内部结构
-  const encrypted = encrypt(inner, key);
+    // 加密整个内部结构
+    const encrypted = encrypt(inner, key);
 
-  // 外部: 4字节加密块大小 + 加密数据
-  const sizeBuf = Buffer.alloc(4);
-  sizeBuf.writeUInt32BE(encrypted.length, 0);
-  return Buffer.concat([sizeBuf, encrypted]);
+    // 外部: 4字节加密块大小 + 加密数据
+    const sizeBuf = Buffer.alloc(4);
+    sizeBuf.writeUInt32BE(encrypted.length, 0);
+    return Buffer.concat([sizeBuf, encrypted]);
 }
 /**
  * 解包解密数据
@@ -86,13 +86,13 @@ export function pack(data: Buffer, key: Buffer): Buffer {
  * 返回: 原始数据
  */
 export function unpack(packet: Buffer, key: Buffer): Buffer {
-  // 跳过前4字节外层大小
-  const encrypted = packet.subarray(4);
-  // 解密
-  const inner = decrypt(encrypted, key);
-  // 读取前4字节原始数据长度
-  const len = inner.readUInt32BE(0);
-  return inner.subarray(4, 4 + len);
+    // 跳过前4字节外层大小
+    const encrypted = packet.subarray(4);
+    // 解密
+    const inner = decrypt(encrypted, key);
+    // 读取前4字节原始数据长度
+    const len = inner.readUInt32BE(0);
+    return inner.subarray(4, 4 + len);
 }
 
 /**
@@ -100,12 +100,12 @@ export function unpack(packet: Buffer, key: Buffer): Buffer {
  * 用于TCP流式读取
  */
 export function tryUnpack(buffer: Buffer, key: Buffer): { data: Buffer; consumed: number } | null {
-  if (buffer.length < 4) return null;
-  const totalLen = buffer.readUInt32BE(0);
-  if (buffer.length < 4 + totalLen) return null;
-  const packet = buffer.subarray(0, 4 + totalLen);
-  const data = unpack(packet, key);
-  return { data, consumed: 4 + totalLen };
+    if (buffer.length < 4) return null;
+    const totalLen = buffer.readUInt32BE(0);
+    if (buffer.length < 4 + totalLen) return null;
+    const packet = buffer.subarray(0, 4 + totalLen);
+    const data = unpack(packet, key);
+    return { data, consumed: 4 + totalLen };
 }
 
 /**
@@ -113,22 +113,22 @@ export function tryUnpack(buffer: Buffer, key: Buffer): { data: Buffer; consumed
  * 用于隧道模式下的数据流
  */
 export function packTunnelData(data: Buffer, key: Buffer): Buffer {
-  const encrypted = encrypt(data, key);
-  const sizeBuf = Buffer.alloc(4);
-  sizeBuf.writeUInt32BE(encrypted.length, 0);
-  return Buffer.concat([sizeBuf, encrypted]);
+    const encrypted = encrypt(data, key);
+    const sizeBuf = Buffer.alloc(4);
+    sizeBuf.writeUInt32BE(encrypted.length, 0);
+    return Buffer.concat([sizeBuf, encrypted]);
 }
 
 /**
  * 从缓冲区中提取第一个隧道数据包
  */
 export function tryUnpackTunnelData(buffer: Buffer, key: Buffer): { data: Buffer; consumed: number } | null {
-  if (buffer.length < 4) return null;
-  const totalLen = buffer.readUInt32BE(0);
-  if (buffer.length < 4 + totalLen) return null;
-  const encrypted = buffer.subarray(4, 4 + totalLen);
-  const data = decrypt(encrypted, key);
-  return { data, consumed: 4 + totalLen };
+    if (buffer.length < 4) return null;
+    const totalLen = buffer.readUInt32BE(0);
+    if (buffer.length < 4 + totalLen) return null;
+    const encrypted = buffer.subarray(4, 4 + totalLen);
+    const data = decrypt(encrypted, key);
+    return { data, consumed: 4 + totalLen };
 }
 
 // ============================================================
@@ -139,35 +139,35 @@ export function tryUnpackTunnelData(buffer: Buffer, key: Buffer): { data: Buffer
  * 序列化隧道建立请求
  */
 export function serializeTunnelRequest(host: string, port: number): Buffer {
-  return Buffer.from(`TUNNEL\n${host}\n${port}`, "utf-8");
+    return Buffer.from(`TUNNEL\n${host}\n${port}`, "utf-8");
 }
 
 /**
  * 序列化隧道建立成功响应
  */
 export function serializeTunnelOk(): Buffer {
-  return Buffer.from("TUNNEL_OK", "utf-8");
+    return Buffer.from("TUNNEL_OK", "utf-8");
 }
 
 /**
  * 序列化关闭命令
  */
 export function serializeClose(): Buffer {
-  return Buffer.from("CLOSE", "utf-8");
+    return Buffer.from("CLOSE", "utf-8");
 }
 
 export interface ParsedTunnelRequest {
-  type: "tunnel";
-  host: string;
-  port: number;
+    type: "tunnel";
+    host: string;
+    port: number;
 }
 
 export interface ParsedTunnelOk {
-  type: "tunnel_ok";
+    type: "tunnel_ok";
 }
 
 export interface ParsedClose {
-  type: "close";
+    type: "close";
 }
 
 export type ParsedCommand = ParsedTunnelRequest | ParsedTunnelOk | ParsedClose;
@@ -176,21 +176,21 @@ export type ParsedCommand = ParsedTunnelRequest | ParsedTunnelOk | ParsedClose;
  * 解析命令帧
  */
 export function parseCommand(data: Buffer): ParsedCommand {
-  const text = data.toString("utf-8");
-  const lines = text.split("\n");
-  const type = lines[0] || "";
+    const text = data.toString("utf-8");
+    const lines = text.split("\n");
+    const type = lines[0] || "";
 
-  switch (type) {
-    case "TUNNEL": {
-      const host = lines[1] || "";
-      const port = parseInt(lines[2] || "0", 10);
-      return { type: "tunnel", host, port };
+    switch (type) {
+        case "TUNNEL": {
+            const host = lines[1] || "";
+            const port = parseInt(lines[2] || "0", 10);
+            return { type: "tunnel", host, port };
+        }
+        case "TUNNEL_OK":
+            return { type: "tunnel_ok" };
+        case "CLOSE":
+            return { type: "close" };
+        default:
+            throw new Error(`未知命令类型: ${type}`);
     }
-    case "TUNNEL_OK":
-      return { type: "tunnel_ok" };
-    case "CLOSE":
-      return { type: "close" };
-    default:
-      throw new Error(`未知命令类型: ${type}`);
-  }
 }

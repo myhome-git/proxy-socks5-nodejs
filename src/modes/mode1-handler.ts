@@ -9,34 +9,34 @@ import { log } from "../utils.js";
 import { type AppConfig } from "../config.js";
 
 export class Mode1Handler {
-  private proxyServer: UnifiedProxyServer | null = null;
-  private config: AppConfig;
-  private encryptKey: Buffer;
+    private proxyServer: UnifiedProxyServer | null = null;
+    private config: AppConfig;
+    private encryptKey: Buffer;
 
-  constructor(config: AppConfig, encryptKey: Buffer) {
-    this.config = config;
-    this.encryptKey = encryptKey;
-  }
-
-  start() {
-    this.proxyServer = new UnifiedProxyServer({
-      proxyPort: this.config.proxyPort,
-      bindHost: this.config.bindHost,
-      remoteHost: this.config.remoteHost,
-      remotePort: this.config.remotePort,
-      remoteProtocol: this.config.remoteProtocol,
-      debugLog: this.config.debugLog,
-      encryptKey: this.encryptKey,
-    });
-    this.proxyServer.start();
-  }
-
-  async stop() {
-    log("Mode1 正在关闭服务...", "INFO");
-    if (this.proxyServer) {
-      await this.proxyServer.stop();
-      this.proxyServer = null;
+    constructor(config: AppConfig, encryptKey: Buffer) {
+        this.config = config;
+        this.encryptKey = encryptKey;
     }
-    log("Mode1 服务已关闭", "INFO");
-  }
+
+    start() {
+        this.proxyServer = new UnifiedProxyServer({
+            proxyPort: this.config.proxyPort,
+            bindHost: this.config.bindHost,
+            remoteHost: this.config.remoteHost,
+            remotePort: this.config.remotePort,
+            remoteProtocol: this.config.remoteProtocol,
+            debugLog: this.config.debugLog,
+            encryptKey: this.encryptKey,
+        });
+        this.proxyServer.start();
+    }
+
+    async stop() {
+        log("Mode1 正在关闭服务...", "INFO");
+        if (this.proxyServer) {
+            await this.proxyServer.stop();
+            this.proxyServer = null;
+        }
+        log("Mode1 服务已关闭", "INFO");
+    }
 }

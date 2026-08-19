@@ -10,22 +10,22 @@ import { Mode1Handler } from "./mode1-handler.js";
 import { Mode2Handler } from "./mode2-handler.js";
 
 export class ProxyModeServer {
-  private handler: Mode1Handler | Mode2Handler;
+    private handler: Mode1Handler | Mode2Handler;
 
-  constructor(config: AppConfig) {
-    const encryptKey = deriveKey(config.encryptPassword, config.encryptSalt);
-    if (config.proxyMode === "mode1") {
-      this.handler = new Mode1Handler(config, encryptKey);
-    } else {
-      this.handler = new Mode2Handler(config, encryptKey);
+    constructor(config: AppConfig) {
+        const encryptKey = deriveKey(config.encryptPassword, config.encryptSalt);
+        if (config.proxyMode === "mode1") {
+            this.handler = new Mode1Handler(config, encryptKey);
+        } else {
+            this.handler = new Mode2Handler(config, encryptKey);
+        }
     }
-  }
 
-  start() {
-    this.handler.start();
-  }
+    start() {
+        this.handler.start();
+    }
 
-  async stop() {
-    await this.handler.stop();
-  }
+    async stop() {
+        await this.handler.stop();
+    }
 }

@@ -225,7 +225,7 @@ export class UnifiedProxyServer {
                                             if (this.config.debugLog) {
                                                 log(`Mode1 -> Mode2 数据 ${host}:${port} 原始（bytes）: ${d.length} 加密（bytes）: ${encryptedData.length}`);
                                             }
-                                            ws.send(encryptedData);      
+                                            ws.send(encryptedData);
                                         } catch { }
                                     },
                                     close: () => {
