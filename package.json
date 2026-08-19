@@ -15,6 +15,7 @@
     "test": "echo 'no tests yet'"
   },
   "dependencies": {
+    "dayjs": "^1.11.23",
     "ws": "^8.21.3"
   },
   "devDependencies": {

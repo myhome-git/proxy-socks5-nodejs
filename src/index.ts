@@ -13,6 +13,7 @@ const config: AppConfig = loadConfig();
 printConfig(config);
 
 const server = new ProxyModeServer(config);
+log("正在启动服务...", "INFO");
 server.start();
 
 // 热更新 / 优雅关闭

@@ -1,8 +1,9 @@
+import dayjs from "dayjs";
 /**
  * 工具函数
  */
 export function log(msg: string, level: "INFO" | "WARN" | "ERROR" = "INFO") {
-    const ts = new Date().toISOString().replace("T", " ").slice(0, 19);
+    const ts = dayjs().format("YYYY-MM-DD HH:mm:ss");
     console.log(`[${ts}] [${level}] ${msg}`);
 }
 
